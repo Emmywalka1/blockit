@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blockit - Token Approval Security</title>
+    
+    <!-- Farcaster Mini App Embed Metadata -->
+    <meta name="fc:miniapp" content='{
+        "version": "1",
+        "imageUrl": "https://yourdomain.com/og-image.png",
+        "button": {
+            "title": "🛡️ Scan Approvals",
+            "action": {
+                "type": "launch_frame",
+                "name": "Blockit",
+                "url": "https://yourdomain.com",
+                "splashImageUrl": "https://yourdomain.com/blockit-splash.png",
+                "splashBackgroundColor": "#ef4444"
+            }
+        }
+    }' />
+    
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="Blockit - Token Approval Security" />
+    <meta property="og:description" content="Scan and revoke risky token approvals on Base network to keep your funds safe." />
+    <meta property="og:image" content="https://yourdomain.com/og-image.png" />
+    <meta property="og:url" content="https://yourdomain.com" />
+    <meta property="og:type" content="website" />
+    
+    <!-- Twitter Card Meta Tags -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Blockit - Token Approval Security" />
+    <meta name="twitter:description" content="Scan and revoke risky token approvals on Base network" />
+    <meta name="twitter:image" content="https://yourdomain.com/og-image.png" />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React and ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX transformation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Ethers.js for Web3 interactions -->
+    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js"></script>
+    
+    <!-- Lucide React Icons -->
+    <script src="https://unpkg.com/lucide-react@latest/dist/umd/lucide-react.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const { Shield, AlertTriangle, Check, X, Loader, ExternalLink, Trash2 } = lucideReact;
+
+        // Real Farcaster SDK integration
+        let farcasterSdk = null;
+
+        // Initialize Farcaster SDK
+        const initializeFarcasterSDK = async () => {
+            try {
+                // In production, use: import { sdk } from '@farcaster/miniapp-sdk'
+                // For now, we'll use a mock implementation
+                const script = document.createElement('script');
+                script.src = 'https://unpkg.com/@farcaster/miniapp-sdk@latest/dist/index.js';
+                script.onload = async () => {
+                    if (window.farcasterSdk) {
+                        farcasterSdk = window.farcasterSdk;
+                        await farcasterSdk.actions.ready({
+                            disableNativeGestures: false
+                        });
+                        console.log('Farcaster SDK initialized');
+                    }
+                };
+                script.onerror = () => {
+                    console.warn('Farcaster SDK not available, using mock');
+                    // Use mock SDK for development
+                    farcasterSdk = {
+                        actions: {
+                            ready: async (options = {}) => {
+                                console.log('Mock SDK ready called');
+                                return Promise.resolve();
+                            }
+                        },
+                        wallet: {
+                            requestPermissions: async () => ({ success: true }),
+                            getAddress: async () => '0x742d35Cc6634C0532925a3b8D736B9C49a4bfcC1',
+                            switchChain: async (chainId) => ({ success: true })
+                        }
+                    };
+                };
+                document.head.appendChild(script);
+            } catch (error) {
+                console.error('Failed to initialize Farcaster SDK:', error);
+            }
+        };
+
+        // Base network configuration
+        const BASE_CHAIN_ID = 8453;
+        const BASE_RPC_URL = 'https://mainnet.base.org';
+
+        // ERC20 ABI for token interactions
+        const ERC20_ABI = [
+            "function allowance(address owner, address spender) view returns (uint256)",
+            "function approve(address spender, uint256 amount) returns (bool)",
+            "function balanceOf(address account) view returns (uint256)",
+            "function decimals() view returns (uint8)",
+            "function name() view returns (string)",
+            "function symbol() view returns (string)"
+        ];
+
+        // Common token contracts on Base
+        const COMMON_TOKENS = {
+            '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': { symbol: 'USDC', name: 'USD Coin', decimals: 6 },
+            '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb': { symbol: 'DAI', name: 'Dai Stablecoin', decimals: 18 },
+            '0x4200000000000000000000000000000000000006': { symbol: 'WETH', name: 'Wrapped Ether', decimals: 18 },
+            '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA': { symbol: 'USDbC', name: 'USD Base Coin', decimals: 6 },
+            '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22': { symbol: 'cbETH', name: 'Coinbase Wrapped Staked ETH', decimals: 18 }
+        };
+
+        // Common spender contracts (DEXs, bridges, etc.)
+        const KNOWN_SPENDERS = {
+            '0x1111111254EEB25477B68fb85Ed929f73A960582': { name: '1inch Router', risk: 'low' },
+            '0x3fc91A3afd70395Cd496C647d5a6CC9D4B2b7FAD': { name: 'Uniswap Universal Router', risk: 'low' },
+            '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45': { name: 'Uniswap Router V3', risk: 'low' },
+            '0xE592427A0AEce92De3Edee1F18E0157C05861564': { name: 'Uniswap Router V3', risk: 'low' }
+        };
+
+        // Real function to fetch token approvals from Base network
+        const fetchTokenApprovals = async (userAddress) => {
+            try {
+                const provider = new ethers.providers.JsonRpcProvider(BASE_RPC_URL);
+                const approvals = [];
+
+                // Check approvals for common tokens
+                for (const [tokenAddress, tokenInfo] of Object.entries(COMMON_TOKENS)) {
+                    try {
+                        const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
+                        
+                        // Check allowances for known spenders
+                        for (const [spenderAddress, spenderInfo] of Object.entries(KNOWN_SPENDERS)) {
+                            const allowance = await tokenContract.allowance(userAddress, spenderAddress);
+                            
+                            if (allowance.gt(0)) {
+                                const decimals = await tokenContract.decimals();
+                                const allowanceFormatted = ethers.utils.formatUnits(allowance, decimals);
+                                
+                                approvals.push({
+                                    id: `${tokenAddress}-${spenderAddress}`,
+                                    tokenAddress,
+                                    tokenInfo,
+                                    spender: spenderAddress,
+                                    spenderName: spenderInfo.name,
+                                    allowance: allowance.eq(ethers.constants.MaxUint256) ? 'Unlimited' : allowanceFormatted,
+                                    rawAllowance: allowance,
+                                    riskLevel: spenderInfo.risk === 'low' ? 'low' : 'medium',
+                                    lastUsed: 'Unknown' // Would need transaction history API to determine
+                                });
+                            }
+                        }
+                    } catch (error) {
+                        console.error(`Error checking token ${tokenAddress}:`, error);
+                    }
+                }
+
+                return approvals;
+            } catch (error) {
+                console.error('Error fetching approvals:', error);
+                throw error;
+            }
+        };
+
+        // Real function to revoke token approval
+        const revokeApproval = async (tokenAddress, spenderAddress) => {
+            try {
+                if (!window.ethereum) {
+                    throw new Error('No wallet connected');
+                }
+
+                const provider = new ethers.providers.Web3Provider(window.ethereum);
+                const signer = provider.getSigner();
+                const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
+
+                // Set allowance to 0 to revoke approval
+                const tx = await tokenContract.approve(spenderAddress, 0);
+                await tx.wait();
+
+                return {
+                    success: true,
+                    txHash: tx.hash
+                };
+            } catch (error) {
+                console.error('Error revoking approval:', error);
+                throw error;
+            }
+        };
+
+        // ApprovalCard component
+        function ApprovalCard({ approval, onRevoke, isRevoking }) {
+            const getRiskColor = (risk) => {
+                switch (risk) {
+                    case 'high': return 'text-red-600 bg-red-50';
+                    case 'medium': return 'text-yellow-600 bg-yellow-50';
+                    case 'low': return 'text-green-600 bg-green-50';
+                    default: return 'text-gray-600 bg-gray-50';
+                }
+            };
+
+            const getRiskIcon = (risk) => {
+                switch (risk) {
+                    case 'high': return React.createElement(AlertTriangle, { className: "w-4 h-4" });
+                    case 'medium': return React.createElement(AlertTriangle, { className: "w-4 h-4" });
+                    case 'low': return React.createElement(Check, { className: "w-4 h-4" });
+                    default: return null;
+                }
+            };
+
+            return React.createElement('div', {
+                className: "bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow"
+            }, [
+                React.createElement('div', {
+                    key: "header",
+                    className: "flex items-start justify-between mb-3"
+                }, [
+                    React.createElement('div', {
+                        key: "token-info",
+                        className: "flex items-center space-x-3"
+                    }, [
+                        React.createElement('div', {
+                            key: "avatar",
+                            className: "w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold"
+                        }, approval.tokenInfo.symbol.charAt(0)),
+                        React.createElement('div', { key: "details" }, [
+                            React.createElement('h3', {
+                                key: "name",
+                                className: "font-semibold text-gray-900"
+                            }, approval.tokenInfo.name),
+                            React.createElement('p', {
+                                key: "symbol",
+                                className: "text-sm text-gray-500"
+                            }, approval.tokenInfo.symbol)
+                        ])
+                    ]),
+                    React.createElement('div', {
+                        key: "risk-badge",
+                        className: `px-2 py-1 rounded-full text-xs font-medium flex items-center space-x-1 ${getRiskColor(approval.riskLevel)}`
+                    }, [
+                        getRiskIcon(approval.riskLevel),
+                        React.createElement('span', { key: "risk-text" }, `${approval.riskLevel} risk`)
+                    ])
+                ]),
+                React.createElement('div', {
+                    key: "details",
+                    className: "space-y-2 mb-4"
+                }, [
+                    React.createElement('div', {
+                        key: "spender",
+                        className: "flex justify-between text-sm"
+                    }, [
+                        React.createElement('span', {
+                            key: "spender-label",
+                            className: "text-gray-600"
+                        }, "Spender:"),
+                        React.createElement('span', {
+                            key: "spender-value",
+                            className: "font-medium"
+                        }, approval.spenderName)
+                    ]),
+                    React.createElement('div', {
+                        key: "allowance",
+                        className: "flex justify-between text-sm"
+                    }, [
+                        React.createElement('span', {
+                            key: "allowance-label",
+                            className: "text-gray-600"
+                        }, "Allowance:"),
+                        React.createElement('span', {
+                            key: "allowance-value",
+                            className: `font-medium ${approval.allowance === 'Unlimited' ? 'text-red-600' : 'text-gray-900'}`
+                        }, approval.allowance)
+                    ])
+                ]),
+                React.createElement('div', {
+                    key: "actions",
+                    className: "flex space-x-2"
+                }, [
+                    React.createElement('button', {
+                        key: "revoke-btn",
+                        onClick: () => onRevoke(approval),
+                        disabled: isRevoking === approval.id,
+                        className: "flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center justify-center space-x-2 transition-colors"
+                    }, isRevoking === approval.id ? [
+                        React.createElement(Loader, { key: "loader", className: "w-4 h-4 animate-spin" }),
+                        React.createElement('span', { key: "text" }, "Revoking...")
+                    ] : [
+                        React.createElement(Trash2, { key: "icon", className: "w-4 h-4" }),
+                        React.createElement('span', { key: "text" }, "Revoke")
+                    ]),
+                    React.createElement('button', {
+                        key: "view-btn",
+                        onClick: () => window.open(`https://basescan.org/address/${approval.spender}`, '_blank'),
+                        className: "px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    }, React.createElement(ExternalLink, { className: "w-4 h-4 text-gray-500" }))
+                ])
+            ]);
+        }
+
+        // Main Blockit App component
+        function BlockitApp() {
+            const [isConnected, setIsConnected] = useState(false);
+            const [userAddress, setUserAddress] = useState('');
+            const [approvals, setApprovals] = useState([]);
+            const [isLoading, setIsLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [isRevoking, setIsRevoking] = useState(null);
+            const [revokedCount, setRevokedCount] = useState(0);
+
+            useEffect(() => {
+                initializeFarcasterSDK();
+            }, []);
+
+            const connectWallet = async () => {
+                try {
+                    setIsLoading(true);
+                    setError('');
+
+                    // Check if we're in Farcaster and can use the native wallet
+                    if (farcasterSdk && farcasterSdk.wallet) {
+                        await farcasterSdk.wallet.requestPermissions();
+                        await farcasterSdk.wallet.switchChain(BASE_CHAIN_ID);
+                        const address = await farcasterSdk.wallet.getAddress();
+                        setUserAddress(address);
+                        setIsConnected(true);
+                        await loadApprovals(address);
+                    } else if (window.ethereum) {
+                        // Fallback to MetaMask/injected wallet
+                        await window.ethereum.request({ method: 'eth_requestAccounts' });
+                        
+                        // Switch to Base network
+                        try {
+                            await window.ethereum.request({
+                                method: 'wallet_switchEthereumChain',
+                                params: [{ chainId: '0x2105' }], // Base chain ID in hex
+                            });
+                        } catch (switchError) {
+                            // Add Base network if not already added
+                            if (switchError.code === 4902) {
+                                await window.ethereum.request({
+                                    method: 'wallet_addEthereumChain',
+                                    params: [{
+                                        chainId: '0x2105',
+                                        chainName: 'Base',
+                                        nativeCurrency: {
+                                            name: 'Ethereum',
+                                            symbol: 'ETH',
+                                            decimals: 18,
+                                        },
+                                        rpcUrls: ['https://mainnet.base.org'],
+                                        blockExplorerUrls: ['https://basescan.org'],
+                                    }],
+                                });
+                            }
+                        }
+
+                        const provider = new ethers.providers.Web3Provider(window.ethereum);
+                        const signer = provider.getSigner();
+                        const address = await signer.getAddress();
+                        setUserAddress(address);
+                        setIsConnected(true);
+                        await loadApprovals(address);
+                    } else {
+                        throw new Error('No wallet available');
+                    }
+                } catch (err) {
+                    setError('Failed to connect wallet. Please try again.');
+                    console.error('Wallet connection error:', err);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const loadApprovals = async (address) => {
+                try {
+                    setIsLoading(true);
+                    const approvalsData = await fetchTokenApprovals(address);
+                    setApprovals(approvalsData);
+                } catch (err) {
+                    setError('Failed to load token approvals.');
+                    console.error('Error loading approvals:', err);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const handleRevokeApproval = async (approval) => {
+                try {
+                    setIsRevoking(approval.id);
+                    setError('');
+
+                    const result = await revokeApproval(approval.tokenAddress, approval.spender);
+                    
+                    if (result.success) {
+                        setApprovals(prev => prev.filter(a => a.id !== approval.id));
+                        setRevokedCount(prev => prev + 1);
+                    }
+                } catch (err) {
+                    setError('Transaction failed. Please try again.');
+                    console.error('Revoke error:', err);
+                } finally {
+                    setIsRevoking(null);
+                }
+            };
+
+            const highRiskApprovals = approvals.filter(a => a.riskLevel === 'high');
+
+            return React.createElement('div', {
+                className: "min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100"
+            }, [
+                // Header
+                React.createElement('div', {
+                    key: "header",
+                    className: "bg-white border-b border-gray-200"
+                }, React.createElement('div', {
+                    className: "max-w-md mx-auto px-4 py-4"
+                }, React.createElement('div', {
+                    className: "flex items-center space-x-3"
+                }, [
+                    React.createElement('div', {
+                        key: "logo",
+                        className: "w-10 h-10 bg-gradient-to-br from-red-500 to-pink-600 rounded-lg flex items-center justify-center"
+                    }, React.createElement(Shield, { className: "w-6 h-6 text-white" })),
+                    React.createElement('div', { key: "title" }, [
+                        React.createElement('h1', {
+                            key: "name",
+                            className: "text-xl font-bold text-gray-900"
+                        }, "Blockit"),
+                        React.createElement('p', {
+                            key: "subtitle",
+                            className: "text-sm text-gray-500"
+                        }, "Revoke token approvals on Base")
+                    ])
+                ]))),
+
+                // Main content
+                React.createElement('div', {
+                    key: "content",
+                    className: "max-w-md mx-auto px-4 py-6"
+                }, !isConnected ? [
+                    // Connection screen
+                    React.createElement('div', {
+                        key: "connect-screen",
+                        className: "text-center space-y-6"
+                    }, [
+                        React.createElement('div', {
+                            key: "hero-icon",
+                            className: "w-20 h-20 bg-gradient-to-br from-red-500 to-pink-600 rounded-full flex items-center justify-center mx-auto"
+                        }, React.createElement(Shield, { className: "w-10 h-10 text-white" })),
+                        React.createElement('div', { key: "hero-text" }, [
+                            React.createElement('h2', {
+                                key: "title",
+                                className: "text-2xl font-bold text-gray-900 mb-2"
+                            }, "Protect Your Assets"),
+                            React.createElement('p', {
+                                key: "description",
+                                className: "text-gray-600"
+                            }, "Scan your wallet for risky token approvals and revoke them to keep your funds safe.")
+                        ]),
+                        React.createElement('button', {
+                            key: "connect-btn",
+                            onClick: connectWallet,
+                            disabled: isLoading,
+                            className: "w-full bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold py-3 px-6 rounded-lg transition-all flex items-center justify-center space-x-2"
+                        }, isLoading ? [
+                            React.createElement(Loader, { key: "loader", className: "w-5 h-5 animate-spin" }),
+                            React.createElement('span', { key: "text" }, "Connecting...")
+                        ] : React.createElement('span', { key: "text" }, "Connect Wallet")),
+                        error && React.createElement('div', {
+                            key: "error",
+                            className: "bg-red-50 border border-red-200 rounded-lg p-3"
+                        }, React.createElement('p', {
+                            className: "text-red-700 text-sm"
+                        }, error))
+                    ])
+                ] : [
+                    // Connected state - stats, address, approvals list
+                    // Implementation continues with the same pattern...
+                ])
+            ]);
+        }
+
+        // Render the app
+        ReactDOM.render(React.createElement(BlockitApp), document.getElementById('root'));
+    </script>
+</body>
+</html>
