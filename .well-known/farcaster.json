@@ -1,3 +1,6 @@
+// FILE: public/.well-known/farcaster.json
+// Farcaster mini app manifest configuration
+
 {
   "accountAssociation": {
     "header": "REPLACE_WITH_YOUR_SIGNED_HEADER",
