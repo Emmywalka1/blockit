@@ -1,5 +1,4 @@
-// FILE: public/.well-known/farcaster.json
-// Farcaster mini app manifest configuration
+
 
 {
   "accountAssociation": {
