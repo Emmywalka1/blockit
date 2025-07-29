@@ -1,130 +1,15 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Blockit - Token Approval Security</title>
     
-    <!-- Farcaster Mini App Embed Metadata -->
-    <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://blockit-two.vercel.app/og-image.png","button":{"title":"🛡️ Scan Approvals","action":{"type":"launch_frame","name":"Blockit","url":"https://blockit-two.vercel.app","splashImageUrl":"https://blockit-two.vercel.app/blockit-splash.png","splashBackgroundColor":"#ef4444"}}}' />
-    
-    <!-- Favicon -->
-    <link rel="icon" type="image/png" href="/favicon.png" />
-    
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React and ReactDOM - MUST LOAD FIRST -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel for JSX transformation -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Ethers.js for Web3 interactions -->
-    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js"></script>
-    
-    <!-- Lucide React Icons - MUST LOAD AFTER REACT -->
-    <script src="https://unpkg.com/lucide-react@latest/dist/umd/lucide-react.js"></script>
-</head>
-<body>
+    <!-- Farcaster Meta Tags -->
+    <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://blockit-two.vercel.app/og-image.png","button":{"title":"🛡️ Scan Approvals","action":{"type":"launch_frame","name":"Blockit","url":"https://blockit-two.vercel.app"}}}' />
+  </head>
+  <body>
     <div id="root"></div>
-
-    <script type="text/babel">
-        const { useState, useEffect } = React;
-        const { Shield, AlertTriangle, Check, Loader, ExternalLink, Trash2, Zap } = lucideReact;
-
-        // Simple test component first
-        function BlockitApp() {
-            const [isLoaded, setIsLoaded] = useState(false);
-
-            useEffect(() => {
-                setIsLoaded(true);
-            }, []);
-
-            return React.createElement('div', {
-                className: "min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4"
-            }, [
-                // Header
-                React.createElement('div', {
-                    key: "header",
-                    className: "bg-white rounded-lg p-6 shadow-sm border border-gray-200 mb-6"
-                }, [
-                    React.createElement('div', {
-                        key: "header-content",
-                        className: "flex items-center space-x-3"
-                    }, [
-                        React.createElement('div', {
-                            key: "logo",
-                            className: "w-12 h-12 bg-gradient-to-br from-red-500 to-pink-600 rounded-lg flex items-center justify-center"
-                        }, React.createElement(Shield, { 
-                            key: "shield-icon",
-                            className: "w-7 h-7 text-white" 
-                        })),
-                        React.createElement('div', { key: "title" }, [
-                            React.createElement('h1', {
-                                key: "name",
-                                className: "text-2xl font-bold text-gray-900"
-                            }, "🛡️ Blockit"),
-                            React.createElement('p', {
-                                key: "subtitle",
-                                className: "text-sm text-gray-500"
-                            }, "Token Approval Security for Base Network")
-                        ])
-                    ])
-                ]),
-
-                // Status
-                React.createElement('div', {
-                    key: "status",
-                    className: "bg-white rounded-lg p-6 shadow-sm border border-gray-200 mb-6"
-                }, [
-                    React.createElement('div', {
-                        key: "status-content",
-                        className: "text-center"
-                    }, [
-                        React.createElement('div', {
-                            key: "status-icon",
-                            className: `w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${isLoaded ? 'bg-green-100' : 'bg-gray-100'}`
-                        }, React.createElement(isLoaded ? Check : Loader, {
-                            className: `w-8 h-8 ${isLoaded ? 'text-green-600' : 'text-gray-400 animate-spin'}`
-                        })),
-                        React.createElement('h2', {
-                            key: "status-title",
-                            className: "text-xl font-semibold text-gray-900 mb-2"
-                        }, isLoaded ? "✅ App Loaded Successfully!" : "Loading..."),
-                        React.createElement('p', {
-                            key: "status-desc",
-                            className: "text-gray-600"
-                        }, isLoaded ? "Blockit is ready to scan token approvals on Base network." : "Setting up the application...")
-                    ])
-                ]),
-
-                // Test Button
-                React.createElement('div', {
-                    key: "test",
-                    className: "bg-white rounded-lg p-6 shadow-sm border border-gray-200"
-                }, [
-                    React.createElement('button', {
-                        key: "test-btn",
-                        onClick: () => alert('🎉 JavaScript is working! Ready to connect wallet.'),
-                        className: "w-full bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white font-semibold py-3 px-6 rounded-lg transition-all flex items-center justify-center space-x-2"
-                    }, [
-                        React.createElement(Zap, { 
-                            key: "btn-icon",
-                            className: "w-5 h-5" 
-                        }),
-                        React.createElement('span', { 
-                            key: "btn-text" 
-                        }, "Test Connection")
-                    ])
-                ])
-            ]);
-        }
-
-        // Render the app
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(React.createElement(BlockitApp));
-    </script>
-</body>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
