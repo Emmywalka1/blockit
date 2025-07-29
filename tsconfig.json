@@ -1,7 +1,4 @@
-// ===================================
-// FILE: tsconfig.json
-// TypeScript configuration
-// ===================================
+
 
 {
   "compilerOptions": {
