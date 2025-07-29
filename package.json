@@ -1,5 +1,3 @@
-/ FILE: package.json
-// Dependencies for production build
 
 {
   "name": "blockit-mini-app",
