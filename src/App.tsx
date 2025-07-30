@@ -1,74 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, AlertTriangle, Check, Loader, ExternalLink, Trash2, Zap, DollarSign, Wifi, WifiOff } from 'lucide-react';
 
-// Farcaster SDK types and integration
-declare global {
-  interface Window {
-    ethereum?: any;
-    farcasterSdk?: any;
-  }
-}
+// Import Farcaster SDK properly
+import { sdk } from '@farcaster/miniapp-sdk';
 
-// Farcaster SDK integration
-let farcasterSdk: any = null;
-
-const initializeFarcasterSDK = async () => {
-  try {
-    // Try to load Farcaster SDK
-    if (typeof window !== 'undefined') {
-      // In production, this would be: import { sdk } from '@farcaster/miniapp-sdk'
-      // For now, we'll use a mock implementation that gracefully falls back
-      
-      const script = document.createElement('script');
-      script.src = 'https://unpkg.com/@farcaster/miniapp-sdk@latest/dist/index.js';
-      script.onload = async () => {
-        if (window.farcasterSdk) {
-          farcasterSdk = window.farcasterSdk;
-          await farcasterSdk.actions.ready({
-            disableNativeGestures: false
-          });
-          console.log('Farcaster SDK initialized successfully');
-        }
-      };
-      script.onerror = () => {
-        console.log('Farcaster SDK not available, using fallback');
-        // Create mock SDK for development/fallback
-        farcasterSdk = {
-          actions: {
-            ready: async (options = {}) => {
-              console.log('Mock Farcaster SDK ready');
-              return Promise.resolve();
-            }
-          },
-          wallet: {
-            requestPermissions: async () => ({ success: true }),
-            getAddress: async () => {
-              if (window.ethereum) {
-                const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-                return accounts[0];
-              }
-              throw new Error('No wallet available');
-            },
-            switchChain: async (chainId: number) => {
-              if (window.ethereum) {
-                await window.ethereum.request({
-                  method: 'wallet_switchEthereumChain',
-                  params: [{ chainId: `0x${chainId.toString(16)}` }],
-                });
-              }
-              return { success: true };
-            }
-          }
-        };
-      };
-      document.head.appendChild(script);
-    }
-  } catch (error) {
-    console.error('Failed to initialize Farcaster SDK:', error);
-  }
-};
-
-// Type definitions (same as before)
+// Type definitions
 interface TokenInfo {
   name: string;
   symbol: string;
@@ -93,9 +29,6 @@ interface GasEstimate {
   totalCost: string;
   usdEstimate: number;
 }
-
-// TokenScanner and ApprovalRevoker classes (same as before - keeping them for brevity)
-// ... [Include the same TokenScanner and ApprovalRevoker classes from previous version]
 
 class TokenScanner {
   private provider: any;
@@ -203,7 +136,7 @@ class ApprovalRevoker {
   }
 }
 
-// ApprovalCard component (same as before)
+// ApprovalCard component
 interface ApprovalCardProps {
   approval: TokenApproval;
   onRevoke: (approval: TokenApproval) => void;
@@ -294,7 +227,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, onRevoke, isRevok
   );
 };
 
-// Main App Component with Farcaster integration
+// Main App Component
 function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -307,6 +240,7 @@ function App() {
   const [provider, setProvider] = useState<any>(null);
   const [error, setError] = useState('');
   const [isFarcasterApp, setIsFarcasterApp] = useState(false);
+  const [sdkReady, setSdkReady] = useState(false);
 
   useEffect(() => {
     initializeApp();
@@ -314,25 +248,40 @@ function App() {
 
   const initializeApp = async () => {
     try {
-      // Initialize Farcaster SDK
-      await initializeFarcasterSDK();
+      console.log('Initializing Farcaster mini app...');
+      
+      // First, call ready to dismiss the splash screen
+      await sdk.actions.ready({
+        disableNativeGestures: false
+      });
+      
+      console.log('SDK ready called successfully');
+      setSdkReady(true);
       
       // Check if running inside Farcaster
-      const isInFarcaster = window.parent !== window || navigator.userAgent.includes('Farcaster');
+      const isInFarcaster = window.parent !== window || 
+                           navigator.userAgent.includes('Farcaster') ||
+                           window.location.href.includes('farcaster');
+      
       setIsFarcasterApp(isInFarcaster);
       
       // Check wallet availability
       checkWalletAvailability();
       
-      console.log('Blockit mini app initialized', { isInFarcaster });
+      console.log('Blockit mini app initialized', { 
+        isInFarcaster, 
+        sdkReady: true 
+      });
     } catch (error) {
       console.error('Failed to initialize app:', error);
+      // Even if SDK fails, mark as ready to prevent hanging
+      setSdkReady(true);
     }
   };
 
   const checkWalletAvailability = async () => {
     try {
-      if (typeof window !== 'undefined' && (window.ethereum || farcasterSdk?.wallet)) {
+      if (typeof window !== 'undefined' && (window.ethereum || sdk?.wallet)) {
         setNetworkStatus('connected');
       } else {
         setNetworkStatus('disconnected');
@@ -351,21 +300,41 @@ function App() {
       let address;
 
       // Try Farcaster wallet first if available
-      if (farcasterSdk && farcasterSdk.wallet && isFarcasterApp) {
+      if (sdk?.wallet && isFarcasterApp) {
         try {
           console.log('Using Farcaster native wallet');
-          await farcasterSdk.wallet.requestPermissions();
-          await farcasterSdk.wallet.switchChain(8453); // Base chain ID
-          address = await farcasterSdk.wallet.getAddress();
+          
+          // Request permissions
+          const permissions = await sdk.wallet.requestPermissions();
+          console.log('Permissions granted:', permissions);
+          
+          // Switch to Base chain
+          await sdk.wallet.switchChain(8453);
+          console.log('Switched to Base chain');
+          
+          // Get address
+          address = await sdk.wallet.getAddress();
+          console.log('Got address:', address);
           
           web3Provider = {
-            request: farcasterSdk.wallet.request?.bind(farcasterSdk.wallet) || window.ethereum.request.bind(window.ethereum),
+            request: async (params: any) => {
+              // Proxy requests to Farcaster wallet
+              if (params.method === 'eth_accounts') {
+                return [address];
+              }
+              // Add other method handlers as needed
+              throw new Error(`Method ${params.method} not implemented`);
+            },
             getSigner: () => ({
-              getAddress: async () => address
+              getAddress: async () => address,
+              sendTransaction: async (tx: any) => {
+                // Use Farcaster wallet to send transactions
+                return await sdk.wallet.sendTransaction(tx);
+              }
             })
           };
           
-          console.log('Farcaster wallet connected:', address);
+          console.log('Farcaster wallet connected successfully');
         } catch (farcasterError) {
           console.warn('Farcaster wallet failed, trying fallback:', farcasterError);
           throw farcasterError;
@@ -487,6 +456,21 @@ function App() {
   const highRiskApprovals = approvals.filter(a => a.riskLevel === 'high');
   const totalValue = approvals.reduce((acc, approval) => acc + approval.estimatedValue, 0);
 
+  // Show loading state until SDK is ready
+  if (!sdkReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Shield className="w-8 h-8 text-white" />
+          </div>
+          <Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
+          <p className="text-gray-600">Initializing Blockit...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       {/* Header */}
@@ -604,7 +588,7 @@ function App() {
             </div>
           </div>
         ) : (
-          /* Main App - same as before but with Farcaster indicators */
+          /* Main App */
           <div className="space-y-6">
             {/* Stats Dashboard */}
             <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
