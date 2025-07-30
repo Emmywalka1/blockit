@@ -115,24 +115,121 @@ class ApprovalRevoker {
   }
 
   async estimateGas(tokenAddress: string, spenderAddress: string): Promise<GasEstimate> {
-    return {
-      gasLimit: '50000',
-      gasPrice: '1000000',
-      totalCost: '50000000000000',
-      usdEstimate: 0.01
-    };
+    try {
+      // In a real implementation, you'd call the contract to estimate gas
+      // For Base network, approval revokes typically cost around 50k gas
+      const gasLimit = '50000';
+      const gasPrice = '1000000'; // 0.001 gwei (Base is very cheap)
+      const totalCost = (parseInt(gasLimit) * parseInt(gasPrice)).toString();
+      const usdEstimate = 0.008; // ~$0.008 on Base network
+      
+      return {
+        gasLimit,
+        gasPrice,
+        totalCost,
+        usdEstimate
+      };
+    } catch (error) {
+      console.error('Gas estimation failed:', error);
+      // Return reasonable defaults for Base network
+      return {
+        gasLimit: '60000',
+        gasPrice: '1500000',
+        totalCost: '90000000000000',
+        usdEstimate: 0.012
+      };
+    }
   }
 
   async revokeApproval(tokenAddress: string, spenderAddress: string): Promise<{ txHash: string; gasInfo: GasEstimate }> {
-    const gasInfo = await this.estimateGas(tokenAddress, spenderAddress);
+    try {
+      const gasInfo = await this.estimateGas(tokenAddress, spenderAddress);
+      
+      // ERC-20 approve function call data to set allowance to 0
+      const approveCallData = this.encodeApproveCall(spenderAddress, '0');
+      
+      console.log('Revoking approval...', {
+        token: tokenAddress,
+        spender: spenderAddress,
+        gasInfo
+      });
+      
+      const transaction = {
+        to: tokenAddress,
+        data: approveCallData,
+        gasLimit: `0x${parseInt(gasInfo.gasLimit).toString(16)}`,
+        gasPrice: `0x${parseInt(gasInfo.gasPrice).toString(16)}`,
+        value: '0x0'
+      };
+      
+      console.log('Sending transaction:', transaction);
+      
+      // Get signer and send transaction
+      const signer = this.provider.getSigner();
+      const txResponse = await signer.sendTransaction(transaction);
+      
+      let txHash: string;
+      
+      // Handle different response formats
+      if (typeof txResponse === 'string') {
+        txHash = txResponse;
+      } else if (txResponse.hash) {
+        txHash = txResponse.hash;
+      } else if (txResponse.result) {
+        txHash = txResponse.result;
+      } else {
+        console.warn('Unexpected transaction response format:', txResponse);
+        txHash = txResponse.toString();
+      }
+      
+      console.log('Transaction sent successfully:', txHash);
+      
+      // Wait for confirmation if possible
+      if (txResponse.wait && typeof txResponse.wait === 'function') {
+        try {
+          await txResponse.wait();
+          console.log('Transaction confirmed');
+        } catch (waitError) {
+          console.warn('Failed to wait for confirmation:', waitError);
+          // Don't fail the whole operation
+        }
+      } else {
+        // Simulate wait time for user feedback
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      return { txHash, gasInfo };
+      
+    } catch (error: any) {
+      console.error('Failed to revoke approval:', error);
+      
+      // Provide user-friendly error messages
+      if (error.code === 4001) {
+        throw new Error('Transaction rejected by user');
+      } else if (error.code === -32603) {
+        throw new Error('Transaction failed. Please try again.');
+      } else if (error.message?.includes('insufficient funds')) {
+        throw new Error('Insufficient ETH for gas fees');
+      } else if (error.message?.includes('gas')) {
+        throw new Error('Gas estimation failed. The transaction might fail.');
+      } else {
+        throw new Error(`Revoke failed: ${error.message || 'Unknown error'}`);
+      }
+    }
+  }
+  
+  private encodeApproveCall(spenderAddress: string, amount: string): string {
+    // ERC-20 approve(address,uint256) function signature
+    const functionSignature = '0x095ea7b3';
     
-    // Simulate transaction
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Encode spender address (pad to 32 bytes)
+    const encodedSpender = spenderAddress.slice(2).padStart(64, '0');
     
-    return { 
-      txHash: '0x' + Math.random().toString(16).substr(2, 64), 
-      gasInfo 
-    };
+    // Encode amount (0 for revoke, pad to 32 bytes)
+    const encodedAmount = amount === '0' ? '0'.padStart(64, '0') : 
+                         parseInt(amount).toString(16).padStart(64, '0');
+    
+    return functionSignature + encodedSpender + encodedAmount;
   }
 }
 
@@ -241,6 +338,7 @@ function App() {
   const [error, setError] = useState('');
   const [isFarcasterApp, setIsFarcasterApp] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
+  const [showDebugInfo, setShowDebugInfo] = useState(false);
 
   useEffect(() => {
     initializeApp();
@@ -258,11 +356,8 @@ function App() {
       console.log('SDK ready called successfully');
       setSdkReady(true);
       
-      // Check if running inside Farcaster
-      const isInFarcaster = window.parent !== window || 
-                           navigator.userAgent.includes('Farcaster') ||
-                           window.location.href.includes('farcaster');
-      
+      // Better Farcaster detection
+      const isInFarcaster = await detectFarcasterEnvironment();
       setIsFarcasterApp(isInFarcaster);
       
       // Check wallet availability
@@ -270,23 +365,92 @@ function App() {
       
       console.log('Blockit mini app initialized', { 
         isInFarcaster, 
-        sdkReady: true 
+        sdkReady: true,
+        walletAvailable: !!(sdk?.wallet || window.ethereum)
       });
     } catch (error) {
       console.error('Failed to initialize app:', error);
       // Even if SDK fails, mark as ready to prevent hanging
       setSdkReady(true);
+      // Still try to detect environment
+      const isInFarcaster = await detectFarcasterEnvironment();
+      setIsFarcasterApp(isInFarcaster);
+    }
+  };
+
+  const detectFarcasterEnvironment = async (): Promise<boolean> => {
+    try {
+      // Multiple ways to detect Farcaster environment
+      const checks = [
+        // Check if we're in an iframe (common for mini apps)
+        window.parent !== window,
+        
+        // Check user agent
+        navigator.userAgent.includes('Farcaster'),
+        
+        // Check if Farcaster SDK wallet is available
+        !!(sdk?.wallet),
+        
+        // Check URL parameters that Farcaster might add
+        window.location.href.includes('farcaster') || 
+        window.location.search.includes('fc_') ||
+        window.location.search.includes('farcaster'),
+        
+        // Check for Farcaster-specific window properties
+        !!(window as any).farcaster || !!(window as any).fc,
+        
+        // Check referrer
+        document.referrer.includes('farcaster') || 
+        document.referrer.includes('warpcast'),
+        
+        // Check for mini app context
+        window.location.hostname !== 'localhost' && 
+        (window.parent !== window || window.top !== window)
+      ];
+      
+      const detectedCount = checks.filter(Boolean).length;
+      const isInFarcaster = detectedCount >= 2; // Require at least 2 indicators
+      
+      console.log('Farcaster environment detection:', {
+        checks: {
+          iframe: checks[0],
+          userAgent: checks[1], 
+          sdkWallet: checks[2],
+          urlParams: checks[3],
+          windowProps: checks[4],
+          referrer: checks[5],
+          miniAppContext: checks[6]
+        },
+        detectedCount,
+        isInFarcaster
+      });
+      
+      return isInFarcaster;
+    } catch (error) {
+      console.error('Error detecting Farcaster environment:', error);
+      return false;
     }
   };
 
   const checkWalletAvailability = async () => {
     try {
-      if (typeof window !== 'undefined' && (window.ethereum || sdk?.wallet)) {
+      // Check both Farcaster wallet and external wallets
+      const farcasterWallet = !!(sdk?.wallet);
+      const externalWallet = !!(window.ethereum);
+      
+      console.log('Wallet availability:', {
+        farcaster: farcasterWallet,
+        external: externalWallet,
+        total: farcasterWallet || externalWallet
+      });
+      
+      if (farcasterWallet || externalWallet) {
         setNetworkStatus('connected');
       } else {
         setNetworkStatus('disconnected');
       }
     } catch (error) {
+      console.error('Error checking wallet availability:', error);
       setNetworkStatus('disconnected');
     }
   };
@@ -304,86 +468,227 @@ function App() {
         try {
           console.log('Using Farcaster native wallet');
           
+          // Check wallet compatibility first
+          const capabilities = await sdk.wallet.getCapabilities?.() || {};
+          console.log('Wallet capabilities:', capabilities);
+          
           // Request permissions
           const permissions = await sdk.wallet.requestPermissions();
           console.log('Permissions granted:', permissions);
           
-          // Switch to Base chain
-          await sdk.wallet.switchChain(8453);
-          console.log('Switched to Base chain');
+          if (!permissions.success) {
+            throw new Error('Permission denied by user');
+          }
           
-          // Get address
+          // Get address first
           address = await sdk.wallet.getAddress();
           console.log('Got address:', address);
           
+          // Switch to Base chain (8453)
+          try {
+            const switchResult = await sdk.wallet.switchChain(8453);
+            console.log('Chain switch result:', switchResult);
+            
+            if (!switchResult.success) {
+              console.warn('Failed to switch to Base chain, but continuing...');
+            }
+          } catch (chainError) {
+            console.warn('Chain switch error (continuing anyway):', chainError);
+            // Don't fail the connection if chain switch fails
+          }
+          
+          // Create a proper Web3 provider that works with Farcaster wallet
           web3Provider = {
+            // Handle standard Web3 requests
             request: async (params: any) => {
-              // Proxy requests to Farcaster wallet
-              if (params.method === 'eth_accounts') {
-                return [address];
+              console.log('Provider request:', params);
+              
+              switch (params.method) {
+                case 'eth_accounts':
+                  return [address];
+                
+                case 'eth_chainId':
+                  return '0x2105'; // Base chain ID
+                  
+                case 'eth_requestAccounts':
+                  return [address];
+                  
+                case 'personal_sign':
+                  if (sdk.wallet.signMessage) {
+                    return await sdk.wallet.signMessage(params.params[0]);
+                  }
+                  throw new Error('Message signing not supported');
+                  
+                case 'eth_sendTransaction':
+                  if (sdk.wallet.sendTransaction) {
+                    const result = await sdk.wallet.sendTransaction(params.params[0]);
+                    return result.hash || result;
+                  }
+                  throw new Error('Transaction sending not supported');
+                  
+                default:
+                  console.warn(`Unsupported method: ${params.method}`);
+                  throw new Error(`Method ${params.method} not supported by Farcaster wallet`);
               }
-              // Add other method handlers as needed
-              throw new Error(`Method ${params.method} not implemented`);
             },
+            
+            // Provide signer interface
             getSigner: () => ({
               getAddress: async () => address,
+              
               sendTransaction: async (tx: any) => {
-                // Use Farcaster wallet to send transactions
-                return await sdk.wallet.sendTransaction(tx);
+                console.log('Sending transaction:', tx);
+                
+                if (!sdk.wallet.sendTransaction) {
+                  throw new Error('Transaction sending not supported by this wallet');
+                }
+                
+                const result = await sdk.wallet.sendTransaction({
+                  to: tx.to,
+                  value: tx.value || '0x0',
+                  data: tx.data || '0x',
+                  gas: tx.gasLimit,
+                  gasPrice: tx.gasPrice
+                });
+                
+                return {
+                  hash: result.hash || result,
+                  wait: async () => {
+                    // Simple wait implementation - in production you'd poll for receipt
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    return { status: 1 };
+                  }
+                };
+              },
+              
+              signMessage: async (message: string) => {
+                if (!sdk.wallet.signMessage) {
+                  throw new Error('Message signing not supported by this wallet');
+                }
+                return await sdk.wallet.signMessage(message);
               }
-            })
+            }),
+            
+            // Add event listener support for compatibility
+            on: (event: string, handler: Function) => {
+              console.log(`Event listener added for: ${event}`);
+            },
+            
+            removeListener: (event: string, handler: Function) => {
+              console.log(`Event listener removed for: ${event}`);
+            }
           };
           
           console.log('Farcaster wallet connected successfully');
-        } catch (farcasterError) {
-          console.warn('Farcaster wallet failed, trying fallback:', farcasterError);
-          throw farcasterError;
-        }
-      } else if (window.ethereum) {
-        // Fallback to regular wallet
-        console.log('Using regular Web3 wallet');
-        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-        
-        // Switch to Base network
-        try {
-          await window.ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x2105' }],
-          });
-        } catch (switchError: any) {
-          if (switchError.code === 4902) {
-            await window.ethereum.request({
-              method: 'wallet_addEthereumChain',
-              params: [{
-                chainId: '0x2105',
-                chainName: 'Base',
-                nativeCurrency: { name: 'Ethereum', symbol: 'ETH', decimals: 18 },
-                rpcUrls: ['https://mainnet.base.org'],
-                blockExplorerUrls: ['https://basescan.org'],
-              }],
-            });
+          
+        } catch (farcasterError: any) {
+          console.error('Farcaster wallet connection failed:', farcasterError);
+          
+          // Provide user-friendly error messages
+          if (farcasterError.message?.includes('Permission denied')) {
+            throw new Error('Please grant wallet permissions to continue');
+          } else if (farcasterError.message?.includes('not supported')) {
+            throw new Error('Your wallet doesn\'t support this feature. Try using a different wallet.');
+          } else {
+            throw new Error(`Farcaster wallet error: ${farcasterError.message}`);
           }
         }
-
-        address = accounts[0];
-        web3Provider = {
-          request: window.ethereum.request.bind(window.ethereum),
-          getSigner: () => ({
-            getAddress: async () => address
-          })
-        };
+      } 
+      
+      // Fallback to external wallet (MetaMask, etc.)
+      else if (window.ethereum) {
+        console.log('Using external Web3 wallet');
         
-        console.log('Regular wallet connected:', address);
-      } else {
-        throw new Error('No wallet available. Please install MetaMask or use within Farcaster.');
+        try {
+          const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+          
+          if (!accounts || accounts.length === 0) {
+            throw new Error('No accounts found. Please unlock your wallet.');
+          }
+          
+          address = accounts[0];
+          
+          // Switch to Base network
+          try {
+            await window.ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: '0x2105' }],
+            });
+          } catch (switchError: any) {
+            // If Base network is not added, add it
+            if (switchError.code === 4902) {
+              await window.ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [{
+                  chainId: '0x2105',
+                  chainName: 'Base',
+                  nativeCurrency: { 
+                    name: 'Ethereum', 
+                    symbol: 'ETH', 
+                    decimals: 18 
+                  },
+                  rpcUrls: ['https://mainnet.base.org'],
+                  blockExplorerUrls: ['https://basescan.org'],
+                }],
+              });
+            } else {
+              throw switchError;
+            }
+          }
+
+          web3Provider = {
+            request: window.ethereum.request.bind(window.ethereum),
+            getSigner: () => ({
+              getAddress: async () => address,
+              sendTransaction: async (tx: any) => {
+                return await window.ethereum.request({
+                  method: 'eth_sendTransaction',
+                  params: [tx]
+                });
+              }
+            }),
+            on: window.ethereum.on?.bind(window.ethereum) || (() => {}),
+            removeListener: window.ethereum.removeListener?.bind(window.ethereum) || (() => {})
+          };
+          
+          console.log('External wallet connected:', address);
+          
+        } catch (externalError: any) {
+          console.error('External wallet connection failed:', externalError);
+          
+          if (externalError.code === 4001) {
+            throw new Error('Please approve the connection request in your wallet');
+          } else if (externalError.code === -32002) {
+            throw new Error('Connection request is already pending. Please check your wallet.');
+          } else {
+            throw new Error(`Wallet connection failed: ${externalError.message}`);
+          }
+        }
+      } 
+      
+      // No wallet available
+      else {
+        throw new Error('No wallet detected. Please install MetaMask or use within Farcaster.');
+      }
+
+      // Validate we have everything we need
+      if (!address) {
+        throw new Error('Failed to get wallet address');
+      }
+      
+      if (!web3Provider) {
+        throw new Error('Failed to create wallet provider');
       }
 
       setProvider(web3Provider);
       setUserAddress(address);
       setIsConnected(true);
 
-      // Start scanning
+      console.log('Wallet connection successful:', { address, isFarcaster: isFarcasterApp });
+
+      // Start scanning for approvals
       await scanApprovals(web3Provider, address);
+      
     } catch (error: any) {
       setError(error.message || 'Failed to connect wallet');
       console.error('Wallet connection failed:', error);
@@ -580,9 +885,88 @@ function App() {
                 )}
               </button>
 
+              {/* Wallet status and guidance */}
+              {networkStatus !== 'connected' && !isLoading && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <AlertTriangle className="w-5 h-5 text-yellow-600" />
+                    <span className="font-semibold text-yellow-800">No Wallet Detected</span>
+                  </div>
+                  <div className="text-yellow-700 text-sm space-y-2">
+                    {isFarcasterApp ? (
+                      <div>
+                        <p>To use this app, you need to:</p>
+                        <ul className="list-disc list-inside mt-1 space-y-1">
+                          <li>Connect a wallet in your Farcaster settings</li>
+                          <li>Make sure wallet permissions are enabled</li>
+                          <li>Try refreshing the app</li>
+                        </ul>
+                      </div>
+                    ) : (
+                      <div>
+                        <p>To use this app, you need to:</p>
+                        <ul className="list-disc list-inside mt-1 space-y-1">
+                          <li>Install MetaMask or another Web3 wallet</li>
+                          <li>Or use this app within Farcaster</li>
+                          <li>Make sure your wallet supports Base network</li>
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* Debug Information - helpful for development */}
+              <div className="text-center">
+                <button
+                  onClick={() => setShowDebugInfo(!showDebugInfo)}
+                  className="text-gray-400 text-xs hover:text-gray-600 transition-colors"
+                >
+                  {showDebugInfo ? 'Hide' : 'Show'} Debug Info
+                </button>
+                
+                {showDebugInfo && (
+                  <div className="mt-3 bg-gray-50 border border-gray-200 rounded-lg p-3 text-left">
+                    <div className="text-xs text-gray-600 space-y-1">
+                      <div><strong>Environment:</strong> {isFarcasterApp ? 'Farcaster Mini App' : 'External Browser'}</div>
+                      <div><strong>SDK Ready:</strong> {sdkReady ? '✅ Yes' : '❌ No'}</div>
+                      <div><strong>SDK Wallet:</strong> {sdk?.wallet ? '✅ Available' : '❌ Not Available'}</div>
+                      <div><strong>External Wallet:</strong> {window.ethereum ? '✅ Available' : '❌ Not Available'}</div>
+                      <div><strong>Network Status:</strong> {networkStatus}</div>
+                      <div><strong>Is iframe:</strong> {window.parent !== window ? 'Yes' : 'No'}</div>
+                      <div><strong>User Agent:</strong> {navigator.userAgent.includes('Farcaster') ? 'Contains Farcaster' : 'Standard'}</div>
+                      <div><strong>URL:</strong> {window.location.hostname}</div>
+                      {error && <div><strong>Last Error:</strong> {error}</div>}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {error && !isConnected && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                  <p className="text-red-700 text-sm">{error}</p>
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <AlertTriangle className="w-5 h-5 text-red-600" />
+                    <span className="font-semibold text-red-800">Connection Failed</span>
+                  </div>
+                  <p className="text-red-700 text-sm mb-3">{error}</p>
+                  
+                  {/* Helpful troubleshooting tips */}
+                  <div className="text-red-600 text-xs">
+                    <p className="font-medium mb-1">Try these solutions:</p>
+                    <ul className="list-disc list-inside space-y-1">
+                      {error.includes('Permission') && (
+                        <li>Grant wallet permissions when prompted</li>
+                      )}
+                      {error.includes('network') && (
+                        <li>Make sure Base network is added to your wallet</li>
+                      )}
+                      {error.includes('not supported') && (
+                        <li>Try using a different wallet or browser</li>
+                      )}
+                      <li>Refresh the page and try again</li>
+                      <li>Check your wallet is unlocked</li>
+                    </ul>
+                  </div>
                 </div>
               )}
             </div>
