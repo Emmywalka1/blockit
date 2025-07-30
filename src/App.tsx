@@ -343,12 +343,14 @@ function BlockitApp() {
       }
 
       // ✅ REAL WAGMI ERC-20 INTERACTION - PUT YOUR CODE HERE
-      await writeContract({
-        address: approval.tokenAddress,
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [approval.spender, BigInt(0)], // Revoke = set allowance to 0
-      });
+     const { writeContract } = useWriteContract();
+
+await writeContract({
+  address: tokenAddress,
+  abi: ERC20_ABI,
+  functionName: 'approve',
+  args: [spender, BigInt(0)], // Revoke = set to 0
+});
 
       // Transaction submitted - wait for confirmation in useEffect below
       
