@@ -464,158 +464,116 @@ function App() {
       let address;
 
       // Try Farcaster wallet first if available
-      if (isFarcasterApp) {
+      if (isFarcasterApp && sdk?.wallet) {
         try {
           console.log('Attempting Farcaster wallet connection...');
-          console.log('SDK object:', sdk);
-          console.log('SDK wallet:', sdk?.wallet);
+          console.log('Available wallet methods:', Object.keys(sdk.wallet));
           
-          // Check what wallet methods are actually available
-          if (sdk?.wallet) {
-            console.log('Available wallet methods:', Object.keys(sdk.wallet));
-          }
+          // Get the Ethereum provider from Farcaster wallet
+          let ethProvider;
           
-          // Try different possible wallet API structures
-          let walletApi = sdk?.wallet;
-          
-          // Some implementations might have different structures
-          if (!walletApi && (window as any).farcaster?.wallet) {
-            walletApi = (window as any).farcaster.wallet;
-            console.log('Using window.farcaster.wallet');
-          }
-          
-          if (!walletApi && (window as any).fc?.wallet) {
-            walletApi = (window as any).fc.wallet;
-            console.log('Using window.fc.wallet');
-          }
-          
-          if (!walletApi) {
-            throw new Error('Farcaster wallet API not found');
-          }
-          
-          console.log('Using wallet API:', walletApi);
-          console.log('Available methods:', Object.keys(walletApi));
-          
-          // Try to request permissions with different possible method names
-          let permissions;
-          if (typeof walletApi.requestPermissions === 'function') {
-            console.log('Calling requestPermissions...');
-            permissions = await walletApi.requestPermissions();
-          } else if (typeof walletApi.requestAccess === 'function') {
-            console.log('Calling requestAccess...');
-            permissions = await walletApi.requestAccess();
-          } else if (typeof walletApi.connect === 'function') {
-            console.log('Calling connect...');
-            permissions = await walletApi.connect();
+          if (typeof sdk.wallet.getEthereumProvider === 'function') {
+            console.log('Getting Ethereum provider via getEthereumProvider()...');
+            ethProvider = await sdk.wallet.getEthereumProvider();
+          } else if (sdk.wallet.ethProvider) {
+            console.log('Using direct ethProvider property...');
+            ethProvider = sdk.wallet.ethProvider;
           } else {
-            console.log('No permission method found, trying to get address directly...');
-            permissions = { success: true }; // Assume success and try to get address
+            throw new Error('No Ethereum provider method found on Farcaster wallet');
           }
           
-          console.log('Permissions result:', permissions);
+          console.log('Ethereum provider:', ethProvider);
+          console.log('Provider methods:', ethProvider ? Object.keys(ethProvider) : 'None');
           
-          // Get address with different possible method names
-          if (typeof walletApi.getAddress === 'function') {
-            address = await walletApi.getAddress();
-          } else if (typeof walletApi.address === 'function') {
-            address = await walletApi.address();
-          } else if (typeof walletApi.getAccount === 'function') {
-            address = await walletApi.getAccount();
-          } else if (walletApi.address && typeof walletApi.address === 'string') {
-            address = walletApi.address;
-          } else {
-            throw new Error('Unable to get wallet address from Farcaster wallet');
+          if (!ethProvider) {
+            throw new Error('Failed to get Ethereum provider from Farcaster wallet');
           }
           
+          // Now use the provider like a standard Web3 provider
+          console.log('Requesting accounts...');
+          const accounts = await ethProvider.request({ method: 'eth_requestAccounts' });
+          console.log('Accounts:', accounts);
+          
+          if (!accounts || accounts.length === 0) {
+            throw new Error('No accounts returned from Farcaster wallet');
+          }
+          
+          address = accounts[0];
           console.log('Got address:', address);
           
-          if (!address) {
-            throw new Error('No address returned from Farcaster wallet');
-          }
-          
-          // Try to switch to Base chain if method is available
-          if (typeof walletApi.switchChain === 'function') {
-            try {
-              console.log('Switching to Base chain...');
-              const switchResult = await walletApi.switchChain(8453);
-              console.log('Chain switch result:', switchResult);
-            } catch (chainError) {
-              console.warn('Chain switch failed, but continuing:', chainError);
+          // Try to switch to Base chain (8453)
+          try {
+            console.log('Switching to Base chain...');
+            await ethProvider.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: '0x2105' }],
+            });
+            console.log('Successfully switched to Base chain');
+          } catch (chainError: any) {
+            console.warn('Chain switch failed, trying to add Base network:', chainError);
+            
+            // If chain doesn't exist, try to add it
+            if (chainError.code === 4902) {
+              try {
+                await ethProvider.request({
+                  method: 'wallet_addEthereumChain',
+                  params: [{
+                    chainId: '0x2105',
+                    chainName: 'Base',
+                    nativeCurrency: { 
+                      name: 'Ethereum', 
+                      symbol: 'ETH', 
+                      decimals: 18 
+                    },
+                    rpcUrls: ['https://mainnet.base.org'],
+                    blockExplorerUrls: ['https://basescan.org'],
+                  }],
+                });
+                console.log('Successfully added and switched to Base chain');
+              } catch (addError) {
+                console.warn('Failed to add Base network, but continuing:', addError);
+              }
             }
-          } else {
-            console.log('Chain switching not available');
           }
           
-          // Create a Web3 provider interface
+          // Create Web3 provider interface using the Farcaster Ethereum provider
           web3Provider = {
             request: async (params: any) => {
               console.log('Provider request:', params);
-              
-              switch (params.method) {
-                case 'eth_accounts':
-                  return [address];
-                
-                case 'eth_chainId':
-                  return '0x2105'; // Base chain ID
-                  
-                case 'eth_requestAccounts':
-                  return [address];
-                  
-                case 'personal_sign':
-                  if (typeof walletApi.signMessage === 'function') {
-                    return await walletApi.signMessage(params.params[0]);
-                  }
-                  throw new Error('Message signing not supported');
-                  
-                case 'eth_sendTransaction':
-                  if (typeof walletApi.sendTransaction === 'function') {
-                    const result = await walletApi.sendTransaction(params.params[0]);
-                    return result.hash || result;
-                  }
-                  throw new Error('Transaction sending not supported');
-                  
-                default:
-                  throw new Error(`Method ${params.method} not supported by Farcaster wallet`);
-              }
+              return await ethProvider.request(params);
             },
             
             getSigner: () => ({
               getAddress: async () => address,
               
               sendTransaction: async (tx: any) => {
-                console.log('Sending transaction via Farcaster wallet:', tx);
+                console.log('Sending transaction via Farcaster provider:', tx);
+                const result = await ethProvider.request({
+                  method: 'eth_sendTransaction',
+                  params: [tx]
+                });
                 
-                if (typeof walletApi.sendTransaction === 'function') {
-                  const result = await walletApi.sendTransaction({
-                    to: tx.to,
-                    value: tx.value || '0x0',
-                    data: tx.data || '0x',
-                    gas: tx.gasLimit,
-                    gasPrice: tx.gasPrice
-                  });
-                  
-                  return {
-                    hash: result.hash || result,
-                    wait: async () => {
-                      await new Promise(resolve => setTimeout(resolve, 2000));
-                      return { status: 1 };
-                    }
-                  };
-                } else {
-                  throw new Error('Transaction sending not supported by this Farcaster wallet');
-                }
+                return {
+                  hash: result,
+                  wait: async () => {
+                    // Simple wait implementation
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    return { status: 1 };
+                  }
+                };
               },
               
               signMessage: async (message: string) => {
-                if (typeof walletApi.signMessage === 'function') {
-                  return await walletApi.signMessage(message);
-                }
-                throw new Error('Message signing not supported');
+                return await ethProvider.request({
+                  method: 'personal_sign',
+                  params: [message, address]
+                });
               }
             }),
             
-            on: () => {},
-            removeListener: () => {}
+            // Forward event methods if available
+            on: ethProvider.on?.bind(ethProvider) || (() => {}),
+            removeListener: ethProvider.removeListener?.bind(ethProvider) || (() => {})
           };
           
           console.log('Farcaster wallet connected successfully');
@@ -623,14 +581,16 @@ function App() {
         } catch (farcasterError: any) {
           console.error('Farcaster wallet connection failed:', farcasterError);
           
-          // If we're definitely in Farcaster but wallet failed, don't try external wallet
-          if (isFarcasterApp && !window.ethereum) {
-            throw new Error(`Farcaster wallet connection failed: ${farcasterError.message}`);
+          // Provide specific error messages based on the error
+          if (farcasterError.message?.includes('User rejected')) {
+            throw new Error('Please approve the wallet connection in Farcaster');
+          } else if (farcasterError.message?.includes('No accounts')) {
+            throw new Error('No wallet accounts found. Please connect a wallet in Farcaster settings.');
+          } else if (farcasterError.code === 4001) {
+            throw new Error('Wallet connection rejected. Please try again.');
+          } else {
+            throw new Error(`Farcaster wallet error: ${farcasterError.message}`);
           }
-          
-          // Otherwise, fall back to external wallet
-          console.log('Falling back to external wallet...');
-          throw farcasterError;
         }
       }
       
