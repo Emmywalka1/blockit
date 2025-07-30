@@ -5,8 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Blockit - Token Approval Security</title>
     
-    <!-- Farcaster Mini App Embed Metadata -->
-    <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://blockit-two.vercel.app/og-image.png","button":{"title":"🛡️ Scan Approvals","action":{"type":"launch_frame","name":"Blockit","url":"https://blockit-two.vercel.app","splashImageUrl":"https://blockit-two.vercel.app/blockit-splash.png","splashBackgroundColor":"#ef4444"}}}' />
+    <!-- Farcaster Mini App Embed Metadata (CORRECTED) -->
+    <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://blockit-two.vercel.app/og-image.png","button":{"title":"🛡️ Scan Approvals","action":{"type":"launch_miniapp","name":"Blockit","url":"https://blockit-two.vercel.app/","splashImageUrl":"https://blockit-two.vercel.app/blockit-splash.png","splashBackgroundColor":"#ef4444"}}}' />
+    
+    <!-- For backward compatibility -->
+    <meta name="fc:frame" content='{"version":"1","imageUrl":"https://blockit-two.vercel.app/og-image.png","button":{"title":"🛡️ Scan Approvals","action":{"type":"launch_frame","name":"Blockit","url":"https://blockit-two.vercel.app","splashImageUrl":"https://blockit-two.vercel.app/blockit-splash.png","splashBackgroundColor":"#ef4444"}}}' />
     
     <!-- Open Graph Meta Tags -->
     <meta property="og:title" content="Blockit - Token Approval Security" />
