@@ -339,6 +339,7 @@ function App() {
   const [isFarcasterApp, setIsFarcasterApp] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
   const [showDebugInfo, setShowDebugInfo] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     initializeApp();
@@ -380,6 +381,13 @@ function App() {
 
   const detectFarcasterEnvironment = async (): Promise<boolean> => {
     try {
+      // Detect if we're on mobile
+      const isMobileDevice = /Android|iPhone|iPad|iPod|Mobile|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                            window.screen.width <= 768 ||
+                            'ontouchstart' in window;
+      
+      setIsMobile(isMobileDevice);
+      
       // Multiple ways to detect Farcaster environment
       const checks = [
         // Check if we're in an iframe (common for mini apps)
@@ -405,7 +413,10 @@ function App() {
         
         // Check for mini app context
         window.location.hostname !== 'localhost' && 
-        (window.parent !== window || window.top !== window)
+        (window.parent !== window || window.top !== window),
+
+        // Mobile-specific checks
+        isMobileDevice && document.referrer.includes('farcaster')
       ];
       
       const detectedCount = checks.filter(Boolean).length;
@@ -419,8 +430,10 @@ function App() {
           urlParams: checks[3],
           windowProps: checks[4],
           referrer: checks[5],
-          miniAppContext: checks[6]
+          miniAppContext: checks[6],
+          mobileAndFarcasterReferrer: checks[7]
         },
+        isMobileDevice,
         detectedCount,
         isInFarcaster
       });
@@ -466,55 +479,118 @@ function App() {
       // Try Farcaster wallet first if available
       if (isFarcasterApp && sdk?.wallet) {
         try {
-          console.log('Attempting Farcaster wallet connection...');
+          console.log(`Attempting Farcaster wallet connection... (${isMobile ? 'Mobile' : 'Desktop'})`);
           console.log('Available wallet methods:', Object.keys(sdk.wallet));
           
-          // Get the Ethereum provider from Farcaster wallet
-          let ethProvider;
-          
-          if (typeof sdk.wallet.getEthereumProvider === 'function') {
-            console.log('Getting Ethereum provider via getEthereumProvider()...');
-            ethProvider = await sdk.wallet.getEthereumProvider();
-          } else if (sdk.wallet.ethProvider) {
-            console.log('Using direct ethProvider property...');
-            ethProvider = sdk.wallet.ethProvider;
-          } else {
-            throw new Error('No Ethereum provider method found on Farcaster wallet');
+          // Mobile apps might need a small delay for initialization
+          if (isMobile) {
+            console.log('Mobile detected, adding initialization delay...');
+            await new Promise(resolve => setTimeout(resolve, 500));
           }
           
-          console.log('Ethereum provider:', ethProvider);
-          console.log('Provider methods:', ethProvider ? Object.keys(ethProvider) : 'None');
+          // Get the Ethereum provider from Farcaster wallet with retries
+          let ethProvider;
+          let retryCount = 0;
+          const maxRetries = isMobile ? 3 : 1;
+          
+          while (!ethProvider && retryCount < maxRetries) {
+            try {
+              if (typeof sdk.wallet.getEthereumProvider === 'function') {
+                console.log(`Getting Ethereum provider via getEthereumProvider() (attempt ${retryCount + 1})...`);
+                ethProvider = await sdk.wallet.getEthereumProvider();
+              } else if (sdk.wallet.ethProvider) {
+                console.log('Using direct ethProvider property...');
+                ethProvider = sdk.wallet.ethProvider;
+              }
+              
+              if (!ethProvider && isMobile && retryCount < maxRetries - 1) {
+                console.log('Provider not ready, retrying in 1 second...');
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+              
+              retryCount++;
+            } catch (providerError) {
+              console.warn(`Provider attempt ${retryCount + 1} failed:`, providerError);
+              retryCount++;
+              if (retryCount < maxRetries) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+            }
+          }
           
           if (!ethProvider) {
-            throw new Error('Failed to get Ethereum provider from Farcaster wallet');
+            throw new Error('Failed to get Ethereum provider from Farcaster wallet after retries');
           }
           
-          // Now use the provider like a standard Web3 provider
+          console.log('Ethereum provider obtained:', ethProvider);
+          console.log('Provider methods:', ethProvider ? Object.keys(ethProvider) : 'None');
+          
+          // For mobile, add extra validation
+          if (isMobile && typeof ethProvider.request !== 'function') {
+            throw new Error('Ethereum provider does not support request method on mobile');
+          }
+          
+          // Request accounts with timeout for mobile
           console.log('Requesting accounts...');
-          const accounts = await ethProvider.request({ method: 'eth_requestAccounts' });
-          console.log('Accounts:', accounts);
+          let accounts;
+          
+          if (isMobile) {
+            // Add timeout for mobile
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Account request timeout')), 15000)
+            );
+            
+            const requestPromise = ethProvider.request({ method: 'eth_requestAccounts' });
+            accounts = await Promise.race([requestPromise, timeoutPromise]);
+          } else {
+            accounts = await ethProvider.request({ method: 'eth_requestAccounts' });
+          }
+          
+          console.log('Accounts response:', accounts);
           
           if (!accounts || accounts.length === 0) {
-            throw new Error('No accounts returned from Farcaster wallet');
+            throw new Error('No accounts returned from Farcaster wallet. Please ensure you have a wallet connected in Farcaster.');
           }
           
           address = accounts[0];
           console.log('Got address:', address);
           
-          // Try to switch to Base chain (8453)
+          // Validate address format
+          if (!address || !address.startsWith('0x') || address.length !== 42) {
+            throw new Error('Invalid address format received from wallet');
+          }
+          
+          // Try to switch to Base chain (8453) with mobile-specific handling
           try {
             console.log('Switching to Base chain...');
-            await ethProvider.request({
-              method: 'wallet_switchEthereumChain',
-              params: [{ chainId: '0x2105' }],
-            });
+            
+            if (isMobile) {
+              // On mobile, chain switching might be slower
+              const switchPromise = ethProvider.request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: '0x2105' }],
+              });
+              
+              const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Chain switch timeout')), 10000)
+              );
+              
+              await Promise.race([switchPromise, timeoutPromise]);
+            } else {
+              await ethProvider.request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: '0x2105' }],
+              });
+            }
+            
             console.log('Successfully switched to Base chain');
           } catch (chainError: any) {
             console.warn('Chain switch failed, trying to add Base network:', chainError);
             
             // If chain doesn't exist, try to add it
-            if (chainError.code === 4902) {
+            if (chainError.code === 4902 || chainError.message?.includes('Unrecognized chain')) {
               try {
+                console.log('Adding Base network...');
                 await ethProvider.request({
                   method: 'wallet_addEthereumChain',
                   params: [{
@@ -533,6 +609,8 @@ function App() {
               } catch (addError) {
                 console.warn('Failed to add Base network, but continuing:', addError);
               }
+            } else if (!chainError.message?.includes('timeout')) {
+              console.warn('Unexpected chain switch error:', chainError);
             }
           }
           
@@ -540,34 +618,71 @@ function App() {
           web3Provider = {
             request: async (params: any) => {
               console.log('Provider request:', params);
-              return await ethProvider.request(params);
+              
+              // Add timeout for mobile requests
+              if (isMobile) {
+                const timeoutPromise = new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Request timeout')), 10000)
+                );
+                
+                const requestPromise = ethProvider.request(params);
+                return await Promise.race([requestPromise, timeoutPromise]);
+              } else {
+                return await ethProvider.request(params);
+              }
             },
             
             getSigner: () => ({
               getAddress: async () => address,
               
               sendTransaction: async (tx: any) => {
-                console.log('Sending transaction via Farcaster provider:', tx);
-                const result = await ethProvider.request({
+                console.log(`Sending transaction via Farcaster provider (${isMobile ? 'Mobile' : 'Desktop'}):`, tx);
+                
+                const requestParams = {
                   method: 'eth_sendTransaction',
                   params: [tx]
-                });
+                };
+                
+                let result;
+                if (isMobile) {
+                  // Longer timeout for mobile transactions
+                  const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Transaction timeout')), 30000)
+                  );
+                  
+                  const txPromise = ethProvider.request(requestParams);
+                  result = await Promise.race([txPromise, timeoutPromise]);
+                } else {
+                  result = await ethProvider.request(requestParams);
+                }
                 
                 return {
                   hash: result,
                   wait: async () => {
-                    // Simple wait implementation
-                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    // Longer wait time for mobile
+                    const waitTime = isMobile ? 5000 : 3000;
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
                     return { status: 1 };
                   }
                 };
               },
               
               signMessage: async (message: string) => {
-                return await ethProvider.request({
+                const requestParams = {
                   method: 'personal_sign',
                   params: [message, address]
-                });
+                };
+                
+                if (isMobile) {
+                  const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Sign timeout')), 15000)
+                  );
+                  
+                  const signPromise = ethProvider.request(requestParams);
+                  return await Promise.race([signPromise, timeoutPromise]);
+                } else {
+                  return await ethProvider.request(requestParams);
+                }
               }
             }),
             
@@ -576,18 +691,22 @@ function App() {
             removeListener: ethProvider.removeListener?.bind(ethProvider) || (() => {})
           };
           
-          console.log('Farcaster wallet connected successfully');
+          console.log(`Farcaster wallet connected successfully on ${isMobile ? 'mobile' : 'desktop'}`);
           
         } catch (farcasterError: any) {
           console.error('Farcaster wallet connection failed:', farcasterError);
           
-          // Provide specific error messages based on the error
-          if (farcasterError.message?.includes('User rejected')) {
+          // Provide specific error messages based on the error and platform
+          if (farcasterError.message?.includes('timeout')) {
+            throw new Error(`Connection timeout. ${isMobile ? 'Try switching to a better network connection.' : 'Please try again.'}`);
+          } else if (farcasterError.message?.includes('User rejected') || farcasterError.code === 4001) {
             throw new Error('Please approve the wallet connection in Farcaster');
           } else if (farcasterError.message?.includes('No accounts')) {
             throw new Error('No wallet accounts found. Please connect a wallet in Farcaster settings.');
-          } else if (farcasterError.code === 4001) {
-            throw new Error('Wallet connection rejected. Please try again.');
+          } else if (farcasterError.message?.includes('Invalid address')) {
+            throw new Error('Invalid wallet address. Please try reconnecting your wallet in Farcaster.');
+          } else if (isMobile && farcasterError.message?.includes('not ready')) {
+            throw new Error('Wallet not ready. Please wait a moment and try again.');
           } else {
             throw new Error(`Farcaster wallet error: ${farcasterError.message}`);
           }
@@ -831,11 +950,26 @@ function App() {
                     <div className="w-5 h-5 bg-purple-600 rounded-full flex items-center justify-center">
                       <span className="text-white text-xs">✓</span>
                     </div>
-                    <span className="font-semibold text-purple-900">Farcaster Native</span>
+                    <span className="font-semibold text-purple-900">
+                      Farcaster Native {isMobile ? '📱' : '💻'}
+                    </span>
                   </div>
                   <p className="text-purple-700 text-sm">
-                    Running inside Farcaster with native wallet integration for the best experience.
+                    {isMobile 
+                      ? 'Running in Farcaster mobile app with native wallet integration. Make sure you have a wallet connected in your Farcaster settings.'
+                      : 'Running inside Farcaster with native wallet integration for the best experience.'
+                    }
                   </p>
+                  {isMobile && (
+                    <div className="mt-2 text-purple-600 text-xs">
+                      <p><strong>Mobile Tips:</strong></p>
+                      <ul className="list-disc list-inside mt-1">
+                        <li>Ensure stable internet connection</li>
+                        <li>Keep Farcaster app updated</li>
+                        <li>Check wallet is connected in Settings</li>
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -868,7 +1002,7 @@ function App() {
                 {isLoading ? (
                   <>
                     <Loader className="w-5 h-5 animate-spin" />
-                    <span>Connecting...</span>
+                    <span>{isMobile ? 'Connecting (may take 10-15s)...' : 'Connecting...'}</span>
                   </>
                 ) : networkStatus !== 'connected' ? (
                   <>
@@ -897,16 +1031,34 @@ function App() {
                         <ul className="list-disc list-inside mt-1 space-y-1">
                           <li>Connect a wallet in your Farcaster settings</li>
                           <li>Make sure wallet permissions are enabled</li>
-                          <li>Try refreshing the app</li>
+                          {isMobile ? (
+                            <>
+                              <li>Ensure stable internet connection</li>
+                              <li>Update Farcaster app if needed</li>
+                              <li>Try closing and reopening the app</li>
+                            </>
+                          ) : (
+                            <li>Try refreshing the app</li>
+                          )}
                         </ul>
                       </div>
                     ) : (
                       <div>
                         <p>To use this app, you need to:</p>
                         <ul className="list-disc list-inside mt-1 space-y-1">
-                          <li>Install MetaMask or another Web3 wallet</li>
-                          <li>Or use this app within Farcaster</li>
-                          <li>Make sure your wallet supports Base network</li>
+                          {isMobile ? (
+                            <>
+                              <li>Use this app within the Farcaster mobile app</li>
+                              <li>Or install a mobile Web3 wallet like MetaMask</li>
+                              <li>Make sure the wallet supports Base network</li>
+                            </>
+                          ) : (
+                            <>
+                              <li>Install MetaMask or another Web3 wallet</li>
+                              <li>Or use this app within Farcaster</li>
+                              <li>Make sure your wallet supports Base network</li>
+                            </>
+                          )}
                         </ul>
                       </div>
                     )}
@@ -927,6 +1079,7 @@ function App() {
                   <div className="mt-3 bg-gray-50 border border-gray-200 rounded-lg p-3 text-left">
                     <div className="text-xs text-gray-600 space-y-1">
                       <div><strong>Environment:</strong> {isFarcasterApp ? 'Farcaster Mini App' : 'External Browser'}</div>
+                      <div><strong>Platform:</strong> {isMobile ? '📱 Mobile' : '💻 Desktop'}</div>
                       <div><strong>SDK Ready:</strong> {sdkReady ? '✅ Yes' : '❌ No'}</div>
                       <div><strong>SDK Object:</strong> {sdk ? '✅ Available' : '❌ Not Available'}</div>
                       <div><strong>SDK Wallet:</strong> {sdk?.wallet ? '✅ Available' : '❌ Not Available'}</div>
@@ -939,6 +1092,8 @@ function App() {
                       <div><strong>Network Status:</strong> {networkStatus}</div>
                       <div><strong>Is iframe:</strong> {window.parent !== window ? 'Yes' : 'No'}</div>
                       <div><strong>User Agent:</strong> {navigator.userAgent.includes('Farcaster') ? 'Contains Farcaster' : 'Standard'}</div>
+                      <div><strong>Screen Size:</strong> {window.screen.width}x{window.screen.height}</div>
+                      <div><strong>Touch Support:</strong> {'ontouchstart' in window ? 'Yes' : 'No'}</div>
                       <div><strong>URL:</strong> {window.location.hostname}</div>
                       <div><strong>Referrer:</strong> {document.referrer || 'None'}</div>
                       {error && <div><strong>Last Error:</strong> {error}</div>}
@@ -967,6 +1122,23 @@ function App() {
                       )}
                       {error.includes('not supported') && (
                         <li>Try using a different wallet or browser</li>
+                      )}
+                      {error.includes('timeout') && isMobile && (
+                        <>
+                          <li>Check your internet connection</li>
+                          <li>Try switching to WiFi or cellular data</li>
+                          <li>Close and reopen the Farcaster app</li>
+                        </>
+                      )}
+                      {error.includes('timeout') && !isMobile && (
+                        <li>Connection timed out, please try again</li>
+                      )}
+                      {isMobile && (
+                        <>
+                          <li>Make sure Farcaster app is up to date</li>
+                          <li>Check wallet is connected in Farcaster Settings</li>
+                          <li>Try closing other apps to free up memory</li>
+                        </>
                       )}
                       <li>Refresh the page and try again</li>
                       <li>Check your wallet is unlocked</li>
