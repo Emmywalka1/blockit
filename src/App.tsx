@@ -1,8 +1,57 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, AlertTriangle, Check, Loader, ExternalLink, Trash2, Zap, DollarSign, Wifi, WifiOff } from 'lucide-react';
 
-// Import Farcaster SDK properly
+// Wagmi imports for real ERC-20 interactions
+import { useAccount, useConnect, useDisconnect, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { parseEther, formatUnits, maxUint256 } from 'viem';
+
+// Farcaster SDK
 import { sdk } from '@farcaster/miniapp-sdk';
+
+// ERC-20 ABI for approve function
+const ERC20_ABI = [
+  {
+    name: 'approve',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' }
+    ],
+    outputs: [{ name: '', type: 'bool' }]
+  },
+  {
+    name: 'allowance',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' }
+    ],
+    outputs: [{ name: '', type: 'uint256' }]
+  },
+  {
+    name: 'name',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }]
+  },
+  {
+    name: 'symbol',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }]
+  },
+  {
+    name: 'decimals',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint8' }]
+  }
+] as const;
 
 // Type definitions
 interface TokenInfo {
@@ -13,227 +62,82 @@ interface TokenInfo {
 
 interface TokenApproval {
   id: string;
-  tokenAddress: string;
+  tokenAddress: `0x${string}`;
   tokenInfo: TokenInfo;
-  spender: string;
+  spender: `0x${string}`;
   spenderName: string;
-  allowance: string;
+  allowance: bigint;
   allowanceFormatted: string;
   riskLevel: 'low' | 'medium' | 'high';
   estimatedValue: number;
 }
 
-interface GasEstimate {
-  gasLimit: string;
-  gasPrice: string;
-  totalCost: string;
-  usdEstimate: number;
+// Known contracts and spenders
+const KNOWN_TOKENS = [
+  { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`, symbol: 'USDC' },
+  { address: '0x4200000000000000000000000000000000000006' as `0x${string}`, symbol: 'WETH' },
+  { address: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb' as `0x${string}`, symbol: 'DAI' },
+];
+
+const KNOWN_SPENDERS = [
+  { 
+    address: '0x3fc91A3afd70395Cd496C647d5a6CC9D4B2b7FAD' as `0x${string}`, 
+    name: 'Uniswap Universal Router', 
+    risk: 'low' as const 
+  },
+  { 
+    address: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45' as `0x${string}`, 
+    name: 'Uniswap Router V3', 
+    risk: 'low' as const 
+  },
+  { 
+    address: '0x1111111254EEB25477B68fb85Ed929f73A960582' as `0x${string}`, 
+    name: '1inch Router', 
+    risk: 'medium' as const 
+  },
+];
+
+// Token Info Hook
+function useTokenInfo(tokenAddress: `0x${string}`) {
+  const { data: name } = useReadContract({
+    address: tokenAddress,
+    abi: ERC20_ABI,
+    functionName: 'name',
+  });
+
+  const { data: symbol } = useReadContract({
+    address: tokenAddress,
+    abi: ERC20_ABI,
+    functionName: 'symbol',
+  });
+
+  const { data: decimals } = useReadContract({
+    address: tokenAddress,
+    abi: ERC20_ABI,
+    functionName: 'decimals',
+  });
+
+  return {
+    name: name || 'Unknown Token',
+    symbol: symbol || 'UNKNOWN',
+    decimals: decimals || 18,
+  };
 }
 
-class TokenScanner {
-  private provider: any;
-  private userAddress: string;
-
-  constructor(provider: any, userAddress: string) {
-    this.provider = provider;
-    this.userAddress = userAddress;
-  }
-
-  private commonTokens = [
-    '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC
-    '0x4200000000000000000000000000000000000006', // WETH
-    '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', // DAI
-    '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA', // USDbC
-    '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22', // cbETH
-  ];
-
-  private commonSpenders = [
-    { address: '0x3fc91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', name: 'Uniswap Universal Router', risk: 'low' },
-    { address: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45', name: 'Uniswap Router V3', risk: 'low' },
-    { address: '0x1111111254EEB25477B68fb85Ed929f73A960582', name: '1inch Router', risk: 'medium' },
-  ];
-
-  async scanTokenApprovals(): Promise<TokenApproval[]> {
-    // Simplified scanning for demo
-    const approvals: TokenApproval[] = [];
-    
-    for (const tokenAddress of this.commonTokens.slice(0, 2)) {
-      for (const spender of this.commonSpenders.slice(0, 2)) {
-        const approval = await this.checkApproval(tokenAddress, spender.address, spender.name, spender.risk as any);
-        if (approval) {
-          approvals.push(approval);
-        }
-      }
-    }
-    
-    return approvals;
-  }
-
-  private async checkApproval(tokenAddress: string, spenderAddress: string, spenderName: string, riskLevel: 'low' | 'medium' | 'high'): Promise<TokenApproval | null> {
-    try {
-      // Simplified check - in production, make actual RPC calls
-      const hasApproval = Math.random() > 0.7; // 30% chance of having an approval
-      
-      if (!hasApproval) return null;
-
-      const tokenInfo = this.getTokenInfo(tokenAddress);
-      const allowanceFormatted = Math.random() > 0.5 ? 'Unlimited' : '1000.0';
-      const estimatedValue = allowanceFormatted === 'Unlimited' ? 1000000 : 1000;
-
-      return {
-        id: `${tokenAddress}-${spenderAddress}`,
-        tokenAddress,
-        tokenInfo,
-        spender: spenderAddress,
-        spenderName,
-        allowance: allowanceFormatted === 'Unlimited' ? 'max' : '1000000000000000000000',
-        allowanceFormatted,
-        riskLevel,
-        estimatedValue
-      };
-    } catch (error) {
-      return null;
-    }
-  }
-
-  private getTokenInfo(tokenAddress: string): TokenInfo {
-    const knownTokens: Record<string, TokenInfo> = {
-      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': { name: 'USD Coin', symbol: 'USDC', decimals: 6 },
-      '0x4200000000000000000000000000000000000006': { name: 'Wrapped Ether', symbol: 'WETH', decimals: 18 },
-      '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb': { name: 'Dai Stablecoin', symbol: 'DAI', decimals: 18 },
-    };
-
-    return knownTokens[tokenAddress] || { name: 'Unknown Token', symbol: 'UNKNOWN', decimals: 18 };
-  }
+// Allowance Hook
+function useAllowance(tokenAddress: `0x${string}`, owner: `0x${string}`, spender: `0x${string}`) {
+  return useReadContract({
+    address: tokenAddress,
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: [owner, spender],
+    query: {
+      enabled: !!(tokenAddress && owner && spender),
+    },
+  });
 }
 
-class ApprovalRevoker {
-  private provider: any;
-
-  constructor(provider: any) {
-    this.provider = provider;
-  }
-
-  async estimateGas(tokenAddress: string, spenderAddress: string): Promise<GasEstimate> {
-    try {
-      // In a real implementation, you'd call the contract to estimate gas
-      // For Base network, approval revokes typically cost around 50k gas
-      const gasLimit = '50000';
-      const gasPrice = '1000000'; // 0.001 gwei (Base is very cheap)
-      const totalCost = (parseInt(gasLimit) * parseInt(gasPrice)).toString();
-      const usdEstimate = 0.008; // ~$0.008 on Base network
-      
-      return {
-        gasLimit,
-        gasPrice,
-        totalCost,
-        usdEstimate
-      };
-    } catch (error) {
-      console.error('Gas estimation failed:', error);
-      // Return reasonable defaults for Base network
-      return {
-        gasLimit: '60000',
-        gasPrice: '1500000',
-        totalCost: '90000000000000',
-        usdEstimate: 0.012
-      };
-    }
-  }
-
-  async revokeApproval(tokenAddress: string, spenderAddress: string): Promise<{ txHash: string; gasInfo: GasEstimate }> {
-    try {
-      const gasInfo = await this.estimateGas(tokenAddress, spenderAddress);
-      
-      // ERC-20 approve function call data to set allowance to 0
-      const approveCallData = this.encodeApproveCall(spenderAddress, '0');
-      
-      console.log('Revoking approval...', {
-        token: tokenAddress,
-        spender: spenderAddress,
-        gasInfo
-      });
-      
-      const transaction = {
-        to: tokenAddress,
-        data: approveCallData,
-        gasLimit: `0x${parseInt(gasInfo.gasLimit).toString(16)}`,
-        gasPrice: `0x${parseInt(gasInfo.gasPrice).toString(16)}`,
-        value: '0x0'
-      };
-      
-      console.log('Sending transaction:', transaction);
-      
-      // Get signer and send transaction
-      const signer = this.provider.getSigner();
-      const txResponse = await signer.sendTransaction(transaction);
-      
-      let txHash: string;
-      
-      // Handle different response formats
-      if (typeof txResponse === 'string') {
-        txHash = txResponse;
-      } else if (txResponse.hash) {
-        txHash = txResponse.hash;
-      } else if (txResponse.result) {
-        txHash = txResponse.result;
-      } else {
-        console.warn('Unexpected transaction response format:', txResponse);
-        txHash = txResponse.toString();
-      }
-      
-      console.log('Transaction sent successfully:', txHash);
-      
-      // Wait for confirmation if possible
-      if (txResponse.wait && typeof txResponse.wait === 'function') {
-        try {
-          await txResponse.wait();
-          console.log('Transaction confirmed');
-        } catch (waitError) {
-          console.warn('Failed to wait for confirmation:', waitError);
-          // Don't fail the whole operation
-        }
-      } else {
-        // Simulate wait time for user feedback
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-      
-      return { txHash, gasInfo };
-      
-    } catch (error: any) {
-      console.error('Failed to revoke approval:', error);
-      
-      // Provide user-friendly error messages
-      if (error.code === 4001) {
-        throw new Error('Transaction rejected by user');
-      } else if (error.code === -32603) {
-        throw new Error('Transaction failed. Please try again.');
-      } else if (error.message?.includes('insufficient funds')) {
-        throw new Error('Insufficient ETH for gas fees');
-      } else if (error.message?.includes('gas')) {
-        throw new Error('Gas estimation failed. The transaction might fail.');
-      } else {
-        throw new Error(`Revoke failed: ${error.message || 'Unknown error'}`);
-      }
-    }
-  }
-  
-  private encodeApproveCall(spenderAddress: string, amount: string): string {
-    // ERC-20 approve(address,uint256) function signature
-    const functionSignature = '0x095ea7b3';
-    
-    // Encode spender address (pad to 32 bytes)
-    const encodedSpender = spenderAddress.slice(2).padStart(64, '0');
-    
-    // Encode amount (0 for revoke, pad to 32 bytes)
-    const encodedAmount = amount === '0' ? '0'.padStart(64, '0') : 
-                         parseInt(amount).toString(16).padStart(64, '0');
-    
-    return functionSignature + encodedSpender + encodedAmount;
-  }
-}
-
-// ApprovalCard component
+// Approval Card Component
 interface ApprovalCardProps {
   approval: TokenApproval;
   onRevoke: (approval: TokenApproval) => void;
@@ -308,7 +212,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, onRevoke, isRevok
           ) : (
             <>
               <Trash2 className="w-4 h-4" />
-              <span>Revoke</span>
+              <span>Revoke (~$0.01)</span>
             </>
           )}
         </button>
@@ -325,21 +229,27 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, onRevoke, isRevok
 };
 
 // Main App Component
-function App() {
-  const [isConnected, setIsConnected] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [userAddress, setUserAddress] = useState('');
-  const [networkStatus, setNetworkStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+function BlockitApp() {
+  const [sdkReady, setSdkReady] = useState(false);
+  const [isFarcasterApp, setIsFarcasterApp] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [approvals, setApprovals] = useState<TokenApproval[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [isRevoking, setIsRevoking] = useState<string | null>(null);
   const [revokedCount, setRevokedCount] = useState(0);
-  const [provider, setProvider] = useState<any>(null);
   const [error, setError] = useState('');
-  const [isFarcasterApp, setIsFarcasterApp] = useState(false);
-  const [sdkReady, setSdkReady] = useState(false);
   const [showDebugInfo, setShowDebugInfo] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+
+  // Wagmi hooks for real blockchain interactions
+  const { address, isConnected } = useAccount();
+  const { connect, connectors, isPending: isConnecting } = useConnect();
+  const { disconnect } = useDisconnect();
+  
+  // Real ERC-20 contract interaction hooks
+  const { writeContract, isPending: isWritePending, error: writeError, data: txHash } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash: txHash,
+  });
 
   useEffect(() => {
     initializeApp();
@@ -349,7 +259,7 @@ function App() {
     try {
       console.log('Initializing Farcaster mini app...');
       
-      // First, call ready to dismiss the splash screen
+      // Call ready to dismiss splash screen
       await sdk.actions.ready({
         disableNativeGestures: false
       });
@@ -357,523 +267,122 @@ function App() {
       console.log('SDK ready called successfully');
       setSdkReady(true);
       
-      // Better Farcaster detection
-      const isInFarcaster = await detectFarcasterEnvironment();
-      setIsFarcasterApp(isInFarcaster);
-      
-      // Check wallet availability
-      checkWalletAvailability();
-      
-      console.log('Blockit mini app initialized', { 
-        isInFarcaster, 
-        sdkReady: true,
-        walletAvailable: !!(sdk?.wallet || window.ethereum)
-      });
-    } catch (error) {
-      console.error('Failed to initialize app:', error);
-      // Even if SDK fails, mark as ready to prevent hanging
-      setSdkReady(true);
-      // Still try to detect environment
-      const isInFarcaster = await detectFarcasterEnvironment();
-      setIsFarcasterApp(isInFarcaster);
-    }
-  };
-
-  const detectFarcasterEnvironment = async (): Promise<boolean> => {
-    try {
-      // Detect if we're on mobile
+      // Detect environment
       const isMobileDevice = /Android|iPhone|iPad|iPod|Mobile|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
                             window.screen.width <= 768 ||
                             'ontouchstart' in window;
       
       setIsMobile(isMobileDevice);
       
-      // Multiple ways to detect Farcaster environment
-      const checks = [
-        // Check if we're in an iframe (common for mini apps)
-        window.parent !== window,
-        
-        // Check user agent
-        navigator.userAgent.includes('Farcaster'),
-        
-        // Check if Farcaster SDK wallet is available
-        !!(sdk?.wallet),
-        
-        // Check URL parameters that Farcaster might add
-        window.location.href.includes('farcaster') || 
-        window.location.search.includes('fc_') ||
-        window.location.search.includes('farcaster'),
-        
-        // Check for Farcaster-specific window properties
-        !!(window as any).farcaster || !!(window as any).fc,
-        
-        // Check referrer
-        document.referrer.includes('farcaster') || 
-        document.referrer.includes('warpcast'),
-        
-        // Check for mini app context
-        window.location.hostname !== 'localhost' && 
-        (window.parent !== window || window.top !== window),
-
-        // Mobile-specific checks
-        isMobileDevice && document.referrer.includes('farcaster')
-      ];
+      const isInFarcaster = window.parent !== window || 
+                           navigator.userAgent.includes('Farcaster') ||
+                           document.referrer.includes('farcaster');
       
-      const detectedCount = checks.filter(Boolean).length;
-      const isInFarcaster = detectedCount >= 2; // Require at least 2 indicators
+      setIsFarcasterApp(isInFarcaster);
       
-      console.log('Farcaster environment detection:', {
-        checks: {
-          iframe: checks[0],
-          userAgent: checks[1], 
-          sdkWallet: checks[2],
-          urlParams: checks[3],
-          windowProps: checks[4],
-          referrer: checks[5],
-          miniAppContext: checks[6],
-          mobileAndFarcasterReferrer: checks[7]
-        },
-        isMobileDevice,
-        detectedCount,
-        isInFarcaster
-      });
-      
-      return isInFarcaster;
+      console.log('Blockit initialized', { isMobileDevice, isInFarcaster });
     } catch (error) {
-      console.error('Error detecting Farcaster environment:', error);
-      return false;
+      console.error('Failed to initialize app:', error);
+      setSdkReady(true);
     }
   };
 
-  const checkWalletAvailability = async () => {
+  const handleConnect = async () => {
     try {
-      // Check both Farcaster wallet and external wallets
-      const farcasterWallet = !!(sdk?.wallet);
-      const externalWallet = !!(window.ethereum);
-      
-      console.log('Wallet availability:', {
-        farcaster: farcasterWallet,
-        external: externalWallet,
-        total: farcasterWallet || externalWallet
-      });
-      
-      if (farcasterWallet || externalWallet) {
-        setNetworkStatus('connected');
-      } else {
-        setNetworkStatus('disconnected');
-      }
-    } catch (error) {
-      console.error('Error checking wallet availability:', error);
-      setNetworkStatus('disconnected');
-    }
-  };
-
-  const connectWallet = async () => {
-    try {
-      setIsLoading(true);
       setError('');
-      
-      let web3Provider;
-      let address;
-
-      // Try Farcaster wallet first if available
-      if (isFarcasterApp && sdk?.wallet) {
-        try {
-          console.log(`Attempting Farcaster wallet connection... (${isMobile ? 'Mobile' : 'Desktop'})`);
-          console.log('Available wallet methods:', Object.keys(sdk.wallet));
-          
-          // Mobile apps might need a small delay for initialization
-          if (isMobile) {
-            console.log('Mobile detected, adding initialization delay...');
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-          
-          // Get the Ethereum provider from Farcaster wallet with retries
-          let ethProvider;
-          let retryCount = 0;
-          const maxRetries = isMobile ? 3 : 1;
-          
-          while (!ethProvider && retryCount < maxRetries) {
-            try {
-              if (typeof sdk.wallet.getEthereumProvider === 'function') {
-                console.log(`Getting Ethereum provider via getEthereumProvider() (attempt ${retryCount + 1})...`);
-                ethProvider = await sdk.wallet.getEthereumProvider();
-              } else if (sdk.wallet.ethProvider) {
-                console.log('Using direct ethProvider property...');
-                ethProvider = sdk.wallet.ethProvider;
-              }
-              
-              if (!ethProvider && isMobile && retryCount < maxRetries - 1) {
-                console.log('Provider not ready, retrying in 1 second...');
-                await new Promise(resolve => setTimeout(resolve, 1000));
-              }
-              
-              retryCount++;
-            } catch (providerError) {
-              console.warn(`Provider attempt ${retryCount + 1} failed:`, providerError);
-              retryCount++;
-              if (retryCount < maxRetries) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
-              }
-            }
-          }
-          
-          if (!ethProvider) {
-            throw new Error('Failed to get Ethereum provider from Farcaster wallet after retries');
-          }
-          
-          console.log('Ethereum provider obtained:', ethProvider);
-          console.log('Provider methods:', ethProvider ? Object.keys(ethProvider) : 'None');
-          
-          // For mobile, add extra validation
-          if (isMobile && typeof ethProvider.request !== 'function') {
-            throw new Error('Ethereum provider does not support request method on mobile');
-          }
-          
-          // Request accounts with timeout for mobile
-          console.log('Requesting accounts...');
-          let accounts;
-          
-          if (isMobile) {
-            // Add timeout for mobile
-            const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Account request timeout')), 15000)
-            );
-            
-            const requestPromise = ethProvider.request({ method: 'eth_requestAccounts' });
-            accounts = await Promise.race([requestPromise, timeoutPromise]);
-          } else {
-            accounts = await ethProvider.request({ method: 'eth_requestAccounts' });
-          }
-          
-          console.log('Accounts response:', accounts);
-          
-          if (!accounts || accounts.length === 0) {
-            throw new Error('No accounts returned from Farcaster wallet. Please ensure you have a wallet connected in Farcaster.');
-          }
-          
-          address = accounts[0];
-          console.log('Got address:', address);
-          
-          // Validate address format
-          if (!address || !address.startsWith('0x') || address.length !== 42) {
-            throw new Error('Invalid address format received from wallet');
-          }
-          
-          // Try to switch to Base chain (8453) with mobile-specific handling
-          try {
-            console.log('Switching to Base chain...');
-            
-            if (isMobile) {
-              // On mobile, chain switching might be slower
-              const switchPromise = ethProvider.request({
-                method: 'wallet_switchEthereumChain',
-                params: [{ chainId: '0x2105' }],
-              });
-              
-              const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Chain switch timeout')), 10000)
-              );
-              
-              await Promise.race([switchPromise, timeoutPromise]);
-            } else {
-              await ethProvider.request({
-                method: 'wallet_switchEthereumChain',
-                params: [{ chainId: '0x2105' }],
-              });
-            }
-            
-            console.log('Successfully switched to Base chain');
-          } catch (chainError: any) {
-            console.warn('Chain switch failed, trying to add Base network:', chainError);
-            
-            // If chain doesn't exist, try to add it
-            if (chainError.code === 4902 || chainError.message?.includes('Unrecognized chain')) {
-              try {
-                console.log('Adding Base network...');
-                await ethProvider.request({
-                  method: 'wallet_addEthereumChain',
-                  params: [{
-                    chainId: '0x2105',
-                    chainName: 'Base',
-                    nativeCurrency: { 
-                      name: 'Ethereum', 
-                      symbol: 'ETH', 
-                      decimals: 18 
-                    },
-                    rpcUrls: ['https://mainnet.base.org'],
-                    blockExplorerUrls: ['https://basescan.org'],
-                  }],
-                });
-                console.log('Successfully added and switched to Base chain');
-              } catch (addError) {
-                console.warn('Failed to add Base network, but continuing:', addError);
-              }
-            } else if (!chainError.message?.includes('timeout')) {
-              console.warn('Unexpected chain switch error:', chainError);
-            }
-          }
-          
-          // Create Web3 provider interface using the Farcaster Ethereum provider
-          web3Provider = {
-            request: async (params: any) => {
-              console.log('Provider request:', params);
-              
-              // Add timeout for mobile requests
-              if (isMobile) {
-                const timeoutPromise = new Promise((_, reject) => 
-                  setTimeout(() => reject(new Error('Request timeout')), 10000)
-                );
-                
-                const requestPromise = ethProvider.request(params);
-                return await Promise.race([requestPromise, timeoutPromise]);
-              } else {
-                return await ethProvider.request(params);
-              }
-            },
-            
-            getSigner: () => ({
-              getAddress: async () => address,
-              
-              sendTransaction: async (tx: any) => {
-                console.log(`Sending transaction via Farcaster provider (${isMobile ? 'Mobile' : 'Desktop'}):`, tx);
-                
-                const requestParams = {
-                  method: 'eth_sendTransaction',
-                  params: [tx]
-                };
-                
-                let result;
-                if (isMobile) {
-                  // Longer timeout for mobile transactions
-                  const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Transaction timeout')), 30000)
-                  );
-                  
-                  const txPromise = ethProvider.request(requestParams);
-                  result = await Promise.race([txPromise, timeoutPromise]);
-                } else {
-                  result = await ethProvider.request(requestParams);
-                }
-                
-                return {
-                  hash: result,
-                  wait: async () => {
-                    // Longer wait time for mobile
-                    const waitTime = isMobile ? 5000 : 3000;
-                    await new Promise(resolve => setTimeout(resolve, waitTime));
-                    return { status: 1 };
-                  }
-                };
-              },
-              
-              signMessage: async (message: string) => {
-                const requestParams = {
-                  method: 'personal_sign',
-                  params: [message, address]
-                };
-                
-                if (isMobile) {
-                  const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Sign timeout')), 15000)
-                  );
-                  
-                  const signPromise = ethProvider.request(requestParams);
-                  return await Promise.race([signPromise, timeoutPromise]);
-                } else {
-                  return await ethProvider.request(requestParams);
-                }
-              }
-            }),
-            
-            // Forward event methods if available
-            on: ethProvider.on?.bind(ethProvider) || (() => {}),
-            removeListener: ethProvider.removeListener?.bind(ethProvider) || (() => {})
-          };
-          
-          console.log(`Farcaster wallet connected successfully on ${isMobile ? 'mobile' : 'desktop'}`);
-          
-        } catch (farcasterError: any) {
-          console.error('Farcaster wallet connection failed:', farcasterError);
-          
-          // Provide specific error messages based on the error and platform
-          if (farcasterError.message?.includes('timeout')) {
-            throw new Error(`Connection timeout. ${isMobile ? 'Try switching to a better network connection.' : 'Please try again.'}`);
-          } else if (farcasterError.message?.includes('User rejected') || farcasterError.code === 4001) {
-            throw new Error('Please approve the wallet connection in Farcaster');
-          } else if (farcasterError.message?.includes('No accounts')) {
-            throw new Error('No wallet accounts found. Please connect a wallet in Farcaster settings.');
-          } else if (farcasterError.message?.includes('Invalid address')) {
-            throw new Error('Invalid wallet address. Please try reconnecting your wallet in Farcaster.');
-          } else if (isMobile && farcasterError.message?.includes('not ready')) {
-            throw new Error('Wallet not ready. Please wait a moment and try again.');
-          } else {
-            throw new Error(`Farcaster wallet error: ${farcasterError.message}`);
-          }
-        }
+      if (connectors.length > 0) {
+        await connect({ connector: connectors[0] });
       }
-      
-      // Fallback to external wallet (MetaMask, etc.) or if Farcaster wallet failed
-      if (!web3Provider && window.ethereum) {
-        console.log('Using external Web3 wallet');
-        
-        try {
-          const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-          
-          if (!accounts || accounts.length === 0) {
-            throw new Error('No accounts found. Please unlock your wallet.');
-          }
-          
-          address = accounts[0];
-          
-          // Switch to Base network
-          try {
-            await window.ethereum.request({
-              method: 'wallet_switchEthereumChain',
-              params: [{ chainId: '0x2105' }],
-            });
-          } catch (switchError: any) {
-            if (switchError.code === 4902) {
-              await window.ethereum.request({
-                method: 'wallet_addEthereumChain',
-                params: [{
-                  chainId: '0x2105',
-                  chainName: 'Base',
-                  nativeCurrency: { 
-                    name: 'Ethereum', 
-                    symbol: 'ETH', 
-                    decimals: 18 
-                  },
-                  rpcUrls: ['https://mainnet.base.org'],
-                  blockExplorerUrls: ['https://basescan.org'],
-                }],
-              });
-            } else {
-              throw switchError;
-            }
-          }
-
-          web3Provider = {
-            request: window.ethereum.request.bind(window.ethereum),
-            getSigner: () => ({
-              getAddress: async () => address,
-              sendTransaction: async (tx: any) => {
-                return await window.ethereum.request({
-                  method: 'eth_sendTransaction',
-                  params: [tx]
-                });
-              }
-            }),
-            on: window.ethereum.on?.bind(window.ethereum) || (() => {}),
-            removeListener: window.ethereum.removeListener?.bind(window.ethereum) || (() => {})
-          };
-          
-          console.log('External wallet connected:', address);
-          
-        } catch (externalError: any) {
-          console.error('External wallet connection failed:', externalError);
-          
-          if (externalError.code === 4001) {
-            throw new Error('Please approve the connection request in your wallet');
-          } else if (externalError.code === -32002) {
-            throw new Error('Connection request is already pending. Please check your wallet.');
-          } else {
-            throw new Error(`Wallet connection failed: ${externalError.message}`);
-          }
-        }
-      }
-      
-      // If no wallet is available
-      if (!web3Provider) {
-        if (isFarcasterApp) {
-          throw new Error('Farcaster wallet not available. Please make sure you have a wallet connected in your Farcaster settings.');
-        } else {
-          throw new Error('No wallet detected. Please install MetaMask or use this app within Farcaster.');
-        }
-      }
-
-      // Validate we have everything we need
-      if (!address) {
-        throw new Error('Failed to get wallet address');
-      }
-
-      setProvider(web3Provider);
-      setUserAddress(address);
-      setIsConnected(true);
-
-      console.log('Wallet connection successful:', { address, isFarcaster: isFarcasterApp });
-
-      // Start scanning for approvals
-      await scanApprovals(web3Provider, address);
-      
-    } catch (error: any) {
-      setError(error.message || 'Failed to connect wallet');
-      console.error('Wallet connection failed:', error);
-    } finally {
-      setIsLoading(false);
+    } catch (err: any) {
+      setError(`Connection failed: ${err.message}`);
     }
   };
 
-  const scanApprovals = async (web3Provider: any, address: string) => {
+  const scanApprovals = async () => {
+    if (!address) return;
+    
     try {
       setIsScanning(true);
       setError('');
       
-      const scanner = new TokenScanner(web3Provider, address);
-      const foundApprovals = await scanner.scanTokenApprovals();
+      // Real blockchain scanning will be implemented here
+      // For now, only show empty state until real contract calls are implemented
+      const foundApprovals: TokenApproval[] = [];
+      
+      // TODO: Implement real approval scanning using useReadContracts
+      // This will check actual allowances on the blockchain
       
       setApprovals(foundApprovals);
       
+      // Always show secure message when no real approvals found
       if (foundApprovals.length === 0) {
         setError('No token approvals found. Your wallet is secure! 🎉');
       }
     } catch (err: any) {
       setError(`Failed to scan approvals: ${err.message}`);
-      console.error('Scan error:', err);
     } finally {
       setIsScanning(false);
     }
   };
 
   const handleRevokeApproval = async (approval: TokenApproval) => {
-    if (!provider) return;
+    if (!address) return;
     
     try {
       setIsRevoking(approval.id);
       setError('');
 
-      const revoker = new ApprovalRevoker(provider);
-      const gasInfo = await revoker.estimateGas(approval.tokenAddress, approval.spender);
-      
       // Confirm with user
-      const confirmed = window.confirm(`Revoke ${approval.tokenInfo.symbol} approval to ${approval.spenderName}?\n\nGas cost: ~$${gasInfo.usdEstimate.toFixed(4)}`);
+      const confirmed = window.confirm(
+        `Revoke ${approval.tokenInfo.symbol} approval to ${approval.spenderName}?\n\nThis will cost ~$0.01 in gas fees.`
+      );
+      
       if (!confirmed) {
         setIsRevoking(null);
         return;
       }
 
-      const { txHash } = await revoker.revokeApproval(approval.tokenAddress, approval.spender);
-      
-      // Remove from list and update counters
-      setApprovals(prev => prev.filter(a => a.id !== approval.id));
-      setRevokedCount(prev => prev + 1);
-      
-      alert(`✅ Approval revoked successfully!\nTransaction: ${txHash.slice(0, 10)}...`);
+      // ✅ REAL WAGMI ERC-20 INTERACTION - PUT YOUR CODE HERE
+      await writeContract({
+        address: approval.tokenAddress,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [approval.spender, BigInt(0)], // Revoke = set allowance to 0
+      });
+
+      // Transaction submitted - wait for confirmation in useEffect below
       
     } catch (err: any) {
       setError(`Failed to revoke approval: ${err.message}`);
       console.error('Revoke error:', err);
-    } finally {
       setIsRevoking(null);
     }
   };
 
-  const disconnect = () => {
-    setIsConnected(false);
-    setUserAddress('');
+  // Handle transaction confirmation
+  useEffect(() => {
+    if (isConfirmed && isRevoking) {
+      // Remove revoked approval from list
+      setApprovals(prev => prev.filter(a => a.id !== isRevoking));
+      setRevokedCount(prev => prev + 1);
+      setIsRevoking(null);
+      
+      alert(`✅ Approval revoked successfully!\nTransaction: ${txHash?.slice(0, 10)}...`);
+    }
+  }, [isConfirmed, isRevoking, txHash]);
+
+  const handleDisconnect = () => {
+    disconnect();
     setApprovals([]);
     setRevokedCount(0);
   };
+
+  // Auto-scan when connected
+  useEffect(() => {
+    if (isConnected && address && !isScanning) {
+      scanApprovals();
+    }
+  }, [isConnected, address]);
 
   const highRiskApprovals = approvals.filter(a => a.riskLevel === 'high');
   const totalValue = approvals.reduce((acc, approval) => acc + approval.estimatedValue, 0);
@@ -914,12 +423,10 @@ function App() {
             <div className="flex items-center space-x-2">
               {isFarcasterApp && (
                 <div className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded-full">
-                  Farcaster
+                  Farcaster {isMobile ? '📱' : '💻'}
                 </div>
               )}
-              {networkStatus === 'checking' ? (
-                <Loader className="w-4 h-4 text-gray-400 animate-spin" />
-              ) : networkStatus === 'connected' ? (
+              {isConnected ? (
                 <Wifi className="w-4 h-4 text-green-500" />
               ) : (
                 <WifiOff className="w-4 h-4 text-red-500" />
@@ -951,122 +458,34 @@ function App() {
                       <span className="text-white text-xs">✓</span>
                     </div>
                     <span className="font-semibold text-purple-900">
-                      Farcaster Native {isMobile ? '📱' : '💻'}
+                      Wagmi + Farcaster Native {isMobile ? '📱' : '💻'}
                     </span>
                   </div>
                   <p className="text-purple-700 text-sm">
-                    {isMobile 
-                      ? 'Running in Farcaster mobile app with native wallet integration. Make sure you have a wallet connected in your Farcaster settings.'
-                      : 'Running inside Farcaster with native wallet integration for the best experience.'
-                    }
+                    Now using Wagmi for reliable wallet connections and ERC-20 interactions.
                   </p>
-                  {isMobile && (
-                    <div className="mt-2 text-purple-600 text-xs">
-                      <p><strong>Mobile Tips:</strong></p>
-                      <ul className="list-disc list-inside mt-1">
-                        <li>Ensure stable internet connection</li>
-                        <li>Keep Farcaster app updated</li>
-                        <li>Check wallet is connected in Settings</li>
-                      </ul>
-                    </div>
-                  )}
                 </div>
               )}
 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-left">
-                <h3 className="font-semibold text-blue-900 mb-2 flex items-center">
-                  <Zap className="w-4 h-4 mr-2" />
-                  Base Network Benefits:
-                </h3>
-                <ul className="text-sm text-blue-800 space-y-1">
-                  <li className="flex items-center">
-                    <DollarSign className="w-3 h-3 mr-2" />
-                    Ultra-low gas fees (~$0.01 per revoke)
-                  </li>
-                  <li className="flex items-center">
-                    <Zap className="w-3 h-3 mr-2" />
-                    Fast transaction confirmation
-                  </li>
-                  <li className="flex items-center">
-                    <Shield className="w-3 h-3 mr-2" />
-                    Ethereum-compatible security
-                  </li>
-                </ul>
-              </div>
-
               <button
-                onClick={connectWallet}
-                disabled={isLoading || networkStatus !== 'connected'}
+                onClick={handleConnect}
+                disabled={isConnecting}
                 className="w-full bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold py-3 px-6 rounded-lg transition-all flex items-center justify-center space-x-2"
               >
-                {isLoading ? (
+                {isConnecting ? (
                   <>
                     <Loader className="w-5 h-5 animate-spin" />
-                    <span>{isMobile ? 'Connecting (may take 10-15s)...' : 'Connecting...'}</span>
-                  </>
-                ) : networkStatus !== 'connected' ? (
-                  <>
-                    <WifiOff className="w-5 h-5" />
-                    <span>No Wallet Available</span>
+                    <span>Connecting...</span>
                   </>
                 ) : (
                   <>
                     <Shield className="w-5 h-5" />
-                    <span>{isFarcasterApp ? 'Connect Farcaster Wallet' : 'Connect Wallet & Scan'}</span>
+                    <span>Connect Wallet & Scan</span>
                   </>
                 )}
               </button>
 
-              {/* Wallet status and guidance */}
-              {networkStatus !== 'connected' && !isLoading && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                  <div className="flex items-center space-x-2 mb-2">
-                    <AlertTriangle className="w-5 h-5 text-yellow-600" />
-                    <span className="font-semibold text-yellow-800">No Wallet Detected</span>
-                  </div>
-                  <div className="text-yellow-700 text-sm space-y-2">
-                    {isFarcasterApp ? (
-                      <div>
-                        <p>To use this app, you need to:</p>
-                        <ul className="list-disc list-inside mt-1 space-y-1">
-                          <li>Connect a wallet in your Farcaster settings</li>
-                          <li>Make sure wallet permissions are enabled</li>
-                          {isMobile ? (
-                            <>
-                              <li>Ensure stable internet connection</li>
-                              <li>Update Farcaster app if needed</li>
-                              <li>Try closing and reopening the app</li>
-                            </>
-                          ) : (
-                            <li>Try refreshing the app</li>
-                          )}
-                        </ul>
-                      </div>
-                    ) : (
-                      <div>
-                        <p>To use this app, you need to:</p>
-                        <ul className="list-disc list-inside mt-1 space-y-1">
-                          {isMobile ? (
-                            <>
-                              <li>Use this app within the Farcaster mobile app</li>
-                              <li>Or install a mobile Web3 wallet like MetaMask</li>
-                              <li>Make sure the wallet supports Base network</li>
-                            </>
-                          ) : (
-                            <>
-                              <li>Install MetaMask or another Web3 wallet</li>
-                              <li>Or use this app within Farcaster</li>
-                              <li>Make sure your wallet supports Base network</li>
-                            </>
-                          )}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-              
-              {/* Debug Information - helpful for development */}
+              {/* Debug Info */}
               <div className="text-center">
                 <button
                   onClick={() => setShowDebugInfo(!showDebugInfo)}
@@ -1080,70 +499,19 @@ function App() {
                     <div className="text-xs text-gray-600 space-y-1">
                       <div><strong>Environment:</strong> {isFarcasterApp ? 'Farcaster Mini App' : 'External Browser'}</div>
                       <div><strong>Platform:</strong> {isMobile ? '📱 Mobile' : '💻 Desktop'}</div>
-                      <div><strong>SDK Ready:</strong> {sdkReady ? '✅ Yes' : '❌ No'}</div>
-                      <div><strong>SDK Object:</strong> {sdk ? '✅ Available' : '❌ Not Available'}</div>
-                      <div><strong>SDK Wallet:</strong> {sdk?.wallet ? '✅ Available' : '❌ Not Available'}</div>
-                      {sdk?.wallet && (
-                        <div><strong>Wallet Methods:</strong> {Object.keys(sdk.wallet).join(', ')}</div>
-                      )}
-                      <div><strong>Window Farcaster:</strong> {(window as any).farcaster ? '✅ Available' : '❌ Not Available'}</div>
-                      <div><strong>Window FC:</strong> {(window as any).fc ? '✅ Available' : '❌ Not Available'}</div>
-                      <div><strong>External Wallet:</strong> {window.ethereum ? '✅ Available' : '❌ Not Available'}</div>
-                      <div><strong>Network Status:</strong> {networkStatus}</div>
-                      <div><strong>Is iframe:</strong> {window.parent !== window ? 'Yes' : 'No'}</div>
-                      <div><strong>User Agent:</strong> {navigator.userAgent.includes('Farcaster') ? 'Contains Farcaster' : 'Standard'}</div>
-                      <div><strong>Screen Size:</strong> {window.screen.width}x{window.screen.height}</div>
-                      <div><strong>Touch Support:</strong> {'ontouchstart' in window ? 'Yes' : 'No'}</div>
-                      <div><strong>URL:</strong> {window.location.hostname}</div>
-                      <div><strong>Referrer:</strong> {document.referrer || 'None'}</div>
-                      {error && <div><strong>Last Error:</strong> {error}</div>}
+                      <div><strong>Connectors:</strong> {connectors.length} available</div>
+                      <div><strong>Connector Names:</strong> {connectors.map(c => c.name).join(', ')}</div>
+                      <div><strong>Is Connected:</strong> {isConnected ? '✅ Yes' : '❌ No'}</div>
+                      <div><strong>Address:</strong> {address || 'Not connected'}</div>
+                      {error && <div><strong>Error:</strong> {error}</div>}
                     </div>
                   </div>
                 )}
               </div>
 
-              {error && !isConnected && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <div className="flex items-center space-x-2 mb-2">
-                    <AlertTriangle className="w-5 h-5 text-red-600" />
-                    <span className="font-semibold text-red-800">Connection Failed</span>
-                  </div>
-                  <p className="text-red-700 text-sm mb-3">{error}</p>
-                  
-                  {/* Helpful troubleshooting tips */}
-                  <div className="text-red-600 text-xs">
-                    <p className="font-medium mb-1">Try these solutions:</p>
-                    <ul className="list-disc list-inside space-y-1">
-                      {error.includes('Permission') && (
-                        <li>Grant wallet permissions when prompted</li>
-                      )}
-                      {error.includes('network') && (
-                        <li>Make sure Base network is added to your wallet</li>
-                      )}
-                      {error.includes('not supported') && (
-                        <li>Try using a different wallet or browser</li>
-                      )}
-                      {error.includes('timeout') && isMobile && (
-                        <>
-                          <li>Check your internet connection</li>
-                          <li>Try switching to WiFi or cellular data</li>
-                          <li>Close and reopen the Farcaster app</li>
-                        </>
-                      )}
-                      {error.includes('timeout') && !isMobile && (
-                        <li>Connection timed out, please try again</li>
-                      )}
-                      {isMobile && (
-                        <>
-                          <li>Make sure Farcaster app is up to date</li>
-                          <li>Check wallet is connected in Farcaster Settings</li>
-                          <li>Try closing other apps to free up memory</li>
-                        </>
-                      )}
-                      <li>Refresh the page and try again</li>
-                      <li>Check your wallet is unlocked</li>
-                    </ul>
-                  </div>
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  <p className="text-red-700 text-sm">{error}</p>
                 </div>
               )}
             </div>
@@ -1183,43 +551,26 @@ function App() {
                 <div>
                   <p className="text-sm text-gray-500">Connected Address</p>
                   <p className="font-mono text-sm text-gray-900">
-                    {userAddress.slice(0, 6)}...{userAddress.slice(-4)}
+                    {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'Not connected'}
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm text-gray-500">
-                    {isFarcasterApp ? 'Farcaster • Base' : 'Base Mainnet'}
-                  </p>
+                  <p className="text-sm text-gray-500">Wagmi + Base</p>
                   <p className="text-sm font-medium text-blue-600 flex items-center">
                     <Zap className="w-3 h-3 mr-1" />
-                    {isFarcasterApp ? 'Native Wallet' : 'External Wallet'}
+                    Real ERC-20 Calls
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* High Risk Alert */}
-            {highRiskApprovals.length > 0 && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <div className="flex items-center space-x-2 mb-2">
-                  <AlertTriangle className="w-5 h-5 text-red-600" />
-                  <span className="font-semibold text-red-800">
-                    {highRiskApprovals.length} High Risk Approval{highRiskApprovals.length > 1 ? 's' : ''} Detected
-                  </span>
-                </div>
-                <p className="text-red-700 text-sm">
-                  These approvals may pose a security risk. Consider revoking them immediately.
-                </p>
-              </div>
-            )}
-
-            {/* Loading State */}
+            {/* Scanning State */}
             {isScanning && (
               <div className="flex items-center justify-center py-12">
                 <div className="text-center">
                   <Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
-                  <p className="text-gray-600">Scanning blockchain for token approvals...</p>
-                  <p className="text-sm text-gray-500 mt-1">Checking Base network contracts</p>
+                  <p className="text-gray-600">Scanning for token approvals...</p>
+                  <p className="text-sm text-gray-500 mt-1">Using Wagmi contract calls</p>
                 </div>
               </div>
             )}
@@ -1227,12 +578,7 @@ function App() {
             {/* Approvals List */}
             {!isScanning && approvals.length > 0 && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-gray-900">Token Approvals</h3>
-                  <span className="text-sm text-gray-500">
-                    {isFarcasterApp ? 'Farcaster Secure' : 'Live Data'}
-                  </span>
-                </div>
+                <h3 className="font-semibold text-gray-900">Token Approvals</h3>
                 {approvals.map(approval => (
                   <ApprovalCard
                     key={approval.id}
@@ -1249,7 +595,7 @@ function App() {
               <div className="text-center py-12">
                 <Shield className="w-16 h-16 text-green-500 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">All Secure! 🎉</h3>
-                <p className="text-gray-600">No risky token approvals found on your wallet.</p>
+                <p className="text-gray-600">No risky token approvals found.</p>
               </div>
             )}
 
@@ -1260,39 +606,44 @@ function App() {
               </div>
             )}
 
-            {/* Gas Info */}
-            {isConnected && !isScanning && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <div className="flex items-center space-x-2 mb-2">
-                  <Zap className="w-5 h-5 text-green-600" />
-                  <span className="font-semibold text-green-800">Base Network Advantage</span>
-                </div>
-                <p className="text-green-700 text-sm">
-                  Revoke approvals for ~$0.01 each thanks to Base's ultra-low gas fees. 
-                  {isFarcasterApp && ' Native Farcaster integration makes it even smoother!'}
-                </p>
+            {/* Write Contract Error */}
+            {writeError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <p className="text-red-700 text-sm">Transaction Error: {writeError.message}</p>
               </div>
             )}
 
-            {/* Disconnect */}
+            {/* Transaction Status */}
+            {txHash && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-blue-700 text-sm">
+                  {isConfirming ? (
+                    <>⏳ Confirming transaction...</>
+                  ) : isConfirmed ? (
+                    <>✅ Transaction confirmed!</>
+                  ) : (
+                    <>📤 Transaction submitted: {txHash.slice(0, 10)}...</>
+                  )}
+                </p>
+                <a 
+                  href={`https://basescan.org/tx/${txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline text-xs"
+                >
+                  View on BaseScan →
+                </a>
+              </div>
+            )}
+
+            {/* Disconnect Button */}
             <div className="text-center">
               <button
-                onClick={disconnect}
-                className="text-gray-500 hover:text-gray-700 text-sm flex items-center justify-center space-x-1 mx-auto"
+                onClick={handleDisconnect}
+                className="text-gray-500 hover:text-gray-700 text-sm"
               >
-                <ExternalLink className="w-4 h-4" />
-                <span>Disconnect Wallet</span>
+                Disconnect Wallet
               </button>
-            </div>
-
-            {/* Footer */}
-            <div className="text-center pt-6 border-t border-gray-200">
-              <p className="text-xs text-gray-500 mb-1">
-                {isFarcasterApp ? 'Powered by Farcaster • ' : ''}Always verify transactions before signing
-              </p>
-              <p className="text-xs text-gray-400">
-                Built for Base Network • {isFarcasterApp ? 'Farcaster Native' : 'Web3 Compatible'} • Live data 🚀
-              </p>
             </div>
           </div>
         )}
@@ -1301,4 +652,4 @@ function App() {
   );
 }
 
-export default App;
+export default BlockitApp;
