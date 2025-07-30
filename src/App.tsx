@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, Check, Loader, ExternalLink, Trash2, Zap, DollarSign, Wifi, WifiOff } from 'lucide-react';
+import { Shield, AlertTriangle, Check, Loader, ExternalLink, Trash2, Zap, DollarSign, Wifi, WifiOff, Database } from 'lucide-react';
 
 // REAL wagmi imports for blockchain interaction
 import { useAccount, useConnect, useDisconnect, useWriteContract, useWaitForTransactionReceipt, useReadContracts } from 'wagmi';
@@ -7,6 +7,17 @@ import { formatUnits } from 'viem';
 
 // Farcaster SDK
 import { sdk } from '@farcaster/miniapp-sdk';
+
+// Import expanded configuration
+import { 
+  BASE_TOKENS, 
+  BASE_SPENDERS, 
+  getTokenByAddress, 
+  getSpenderByAddress,
+  CONFIG_SUMMARY,
+  type TokenConfig,
+  type SpenderConfig
+} from './config/baseConfig';
 
 // REAL ERC-20 ABI for actual contract calls
 const ERC20_ABI = [
@@ -54,48 +65,18 @@ const ERC20_ABI = [
 ] as const;
 
 // Type definitions
-interface TokenInfo {
-  name: string;
-  symbol: string;
-  decimals: number;
-}
-
 interface TokenApproval {
   id: string;
   tokenAddress: `0x${string}`;
-  tokenInfo: TokenInfo;
+  tokenInfo: TokenConfig;
   spender: `0x${string}`;
-  spenderName: string;
+  spenderInfo: SpenderConfig;
   allowance: bigint;
   allowanceFormatted: string;
   riskLevel: 'low' | 'medium' | 'high';
   estimatedValue: number;
+  isUnlimited: boolean;
 }
-
-// REAL Base network contracts (verified on BaseScan)
-const BASE_TOKENS = [
-  { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`, symbol: 'USDC', decimals: 6 },
-  { address: '0x4200000000000000000000000000000000000006' as `0x${string}`, symbol: 'WETH', decimals: 18 },
-  { address: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb' as `0x${string}`, symbol: 'DAI', decimals: 18 },
-];
-
-const BASE_SPENDERS = [
-  { 
-    address: '0x3fc91A3afd70395Cd496C647d5a6CC9D4B2b7FAD' as `0x${string}`, 
-    name: 'Uniswap Universal Router', 
-    risk: 'low' as const 
-  },
-  { 
-    address: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45' as `0x${string}`, 
-    name: 'Uniswap Router V3', 
-    risk: 'low' as const 
-  },
-  { 
-    address: '0x1111111254EEB25477B68fb85Ed929f73A960582' as `0x${string}`, 
-    name: '1inch Router', 
-    risk: 'medium' as const 
-  },
-];
 
 // ApprovalCard component
 interface ApprovalCardProps {
@@ -123,6 +104,17 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, onRevoke, isRevok
     }
   };
 
+  const getCategoryIcon = (category: string) => {
+    switch (category) {
+      case 'dex': return '🔄';
+      case 'lending': return '🏦';
+      case 'bridge': return '🌉';
+      case 'aggregator': return '📊';
+      case 'farming': return '🌾';
+      default: return '❓';
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between mb-3">
@@ -143,18 +135,31 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, onRevoke, isRevok
 
       <div className="space-y-2 mb-4">
         <div className="flex justify-between text-sm">
+          <span className="text-gray-600">Protocol:</span>
+          <div className="flex items-center space-x-1">
+            <span>{getCategoryIcon(approval.spenderInfo.category)}</span>
+            <span className="font-medium text-right max-w-[180px] truncate">
+              {approval.spenderInfo.protocol}
+            </span>
+          </div>
+        </div>
+        <div className="flex justify-between text-sm">
           <span className="text-gray-600">Spender:</span>
-          <span className="font-medium text-right max-w-[200px] truncate">{approval.spenderName}</span>
+          <span className="font-medium text-right max-w-[180px] truncate">
+            {approval.spenderInfo.name}
+          </span>
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-gray-600">Allowance:</span>
-          <span className={`font-medium ${approval.allowanceFormatted === 'Unlimited' ? 'text-red-600' : 'text-gray-900'}`}>
+          <span className={`font-medium ${approval.isUnlimited ? 'text-red-600' : 'text-gray-900'}`}>
             {approval.allowanceFormatted}
           </span>
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-gray-600">Est. Value:</span>
-          <span className="font-medium">${approval.estimatedValue > 1000000 ? '1M+' : approval.estimatedValue.toLocaleString()}</span>
+          <span className="font-medium">
+            ${approval.estimatedValue > 1000000 ? '1M+' : approval.estimatedValue.toLocaleString()}
+          </span>
         </div>
       </div>
 
@@ -183,6 +188,15 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({ approval, onRevoke, isRevok
         >
           <ExternalLink className="w-4 h-4 text-gray-500" />
         </button>
+        {approval.spenderInfo.website && (
+          <button
+            onClick={() => window.open(approval.spenderInfo.website, '_blank')}
+            className="px-3 py-2 border border-blue-300 text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
+            title="Visit Protocol Website"
+          >
+            🌐
+          </button>
+        )}
       </div>
     </div>
   );
@@ -199,6 +213,7 @@ function BlockitApp() {
   const [revokedCount, setRevokedCount] = useState(0);
   const [error, setError] = useState('');
   const [showDebugInfo, setShowDebugInfo] = useState(false);
+  const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
 
   // REAL wagmi hooks for blockchain interaction
   const { address, isConnected } = useAccount();
@@ -211,13 +226,14 @@ function BlockitApp() {
     hash: txHash,
   });
 
-  // REAL blockchain contract calls using useReadContracts
+  // REAL blockchain contract calls using useReadContracts (EXPANDED)
   const contractCalls = React.useMemo(() => {
     if (!address) return [];
 
     const calls = [];
     
     // Create contract calls for each token-spender combination
+    // Now scanning ${BASE_TOKENS.length} tokens against ${BASE_SPENDERS.length} spenders
     for (const token of BASE_TOKENS) {
       for (const spender of BASE_SPENDERS) {
         calls.push({
@@ -271,7 +287,11 @@ function BlockitApp() {
       
       setIsFarcasterApp(isInFarcaster);
       
-      console.log('Blockit initialized', { isMobileDevice, isInFarcaster });
+      console.log('Blockit initialized', { 
+        isMobileDevice, 
+        isInFarcaster,
+        configSummary: CONFIG_SUMMARY
+      });
     } catch (error) {
       console.error('Failed to initialize app:', error);
       setSdkReady(true);
@@ -289,10 +309,11 @@ function BlockitApp() {
     }
   };
 
-  // REAL blockchain scanning using contract results
+  // REAL blockchain scanning using contract results (EXPANDED)
   useEffect(() => {
     if (contractResults && address && !isLoadingContracts) {
       console.log('Processing REAL blockchain contract results...');
+      console.log(`Scanning results from ${BASE_TOKENS.length} tokens × ${BASE_SPENDERS.length} spenders = ${CONFIG_SUMMARY.totalCombinations} combinations`);
       
       const realApprovals: TokenApproval[] = [];
       let resultIndex = 0;
@@ -313,23 +334,20 @@ function BlockitApp() {
               const realApproval: TokenApproval = {
                 id: `${token.address}-${spender.address}`,
                 tokenAddress: token.address,
-                tokenInfo: {
-                  name: `${token.symbol}`,
-                  symbol: token.symbol,
-                  decimals: token.decimals,
-                },
+                tokenInfo: token,
                 spender: spender.address,
-                spenderName: spender.name,
+                spenderInfo: spender,
                 allowance,
                 allowanceFormatted: isUnlimited 
                   ? 'Unlimited' 
                   : formatUnits(allowance, token.decimals),
                 riskLevel: spender.risk,
                 estimatedValue: isUnlimited ? 1000000 : Number(formatUnits(allowance, token.decimals)) * 1, // Rough USD estimate
+                isUnlimited,
               };
 
               realApprovals.push(realApproval);
-              console.log(`Found REAL approval: ${token.symbol} → ${spender.name} (${formatUnits(allowance, token.decimals)})`);
+              console.log(`Found REAL approval: ${token.symbol} → ${spender.protocol} (${formatUnits(allowance, token.decimals)})`);
             }
           }
         }
@@ -337,30 +355,58 @@ function BlockitApp() {
 
       setApprovals(realApprovals);
       setIsScanning(false);
+      setScanProgress({ current: 0, total: 0 });
       
       if (realApprovals.length === 0) {
-        setError('✅ No token approvals found. Your wallet is secure!');
+        setError(`✅ No token approvals found across ${CONFIG_SUMMARY.totalCombinations} contract combinations. Your wallet is secure!`);
         console.log('REAL scan complete: No approvals found - wallet is actually secure');
       } else {
         setError('');
         console.log(`REAL scan complete: Found ${realApprovals.length} actual approvals on Base blockchain`);
+        
+        // Log risk distribution of found approvals
+        const riskCounts = realApprovals.reduce((acc, approval) => {
+          acc[approval.riskLevel] = (acc[approval.riskLevel] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+        console.log('Risk distribution of found approvals:', riskCounts);
       }
     }
 
     if (contractError) {
       setError(`Blockchain scan failed: ${contractError.message}`);
       setIsScanning(false);
+      setScanProgress({ current: 0, total: 0 });
     }
   }, [contractResults, isLoadingContracts, address, contractError]);
 
-  // Auto-scan when connected
+  // Auto-scan when connected with progress tracking
   useEffect(() => {
     if (isConnected && address) {
       console.log('Connected to wallet, starting REAL blockchain scan...');
+      console.log(`Will scan ${CONFIG_SUMMARY.totalCombinations} token-spender combinations`);
       setIsScanning(true);
+      setScanProgress({ current: 0, total: CONFIG_SUMMARY.totalCombinations });
       setError('');
     }
   }, [isConnected, address]);
+
+  // Update scan progress
+  useEffect(() => {
+    if (isLoadingContracts && scanProgress.total > 0) {
+      // Simulate progress updates
+      const interval = setInterval(() => {
+        setScanProgress(prev => {
+          if (prev.current < prev.total) {
+            return { ...prev, current: prev.current + Math.floor(prev.total / 20) };
+          }
+          return prev;
+        });
+      }, 200);
+
+      return () => clearInterval(interval);
+    }
+  }, [isLoadingContracts, scanProgress.total]);
 
   const handleRevokeApproval = async (approval: TokenApproval) => {
     if (!address) return;
@@ -370,7 +416,7 @@ function BlockitApp() {
       setError('');
 
       const confirmed = window.confirm(
-        `Revoke ${approval.tokenInfo.symbol} approval to ${approval.spenderName}?\n\nThis will cost ~$0.01 in gas fees.`
+        `Revoke ${approval.tokenInfo.symbol} approval to ${approval.spenderInfo.protocol}?\n\nContract: ${approval.spenderInfo.name}\nRisk Level: ${approval.riskLevel}\n\nThis will cost ~$0.01 in gas fees.`
       );
       
       if (!confirmed) {
@@ -412,9 +458,11 @@ function BlockitApp() {
     setApprovals([]);
     setRevokedCount(0);
     setError('');
+    setScanProgress({ current: 0, total: 0 });
   };
 
   const highRiskApprovals = approvals.filter(a => a.riskLevel === 'high');
+  const mediumRiskApprovals = approvals.filter(a => a.riskLevel === 'medium');
   const totalValue = approvals.reduce((acc, approval) => acc + approval.estimatedValue, 0);
 
   if (!sdkReady) {
@@ -426,6 +474,7 @@ function BlockitApp() {
           </div>
           <Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
           <p className="text-gray-600">Initializing Blockit...</p>
+          <p className="text-sm text-gray-500">Loading {CONFIG_SUMMARY.totalTokens} tokens & {CONFIG_SUMMARY.totalSpenders} protocols</p>
         </div>
       </div>
     );
@@ -475,8 +524,37 @@ function BlockitApp() {
               <div>
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Secure Your Assets</h2>
                 <p className="text-gray-600">
-                  Auto-detect and revoke risky token approvals on Base network. Keep your funds safe from malicious contracts.
+                  Auto-detect and revoke risky token approvals on Base network. Now scanning {CONFIG_SUMMARY.totalTokens} tokens across {CONFIG_SUMMARY.totalSpenders} protocols.
                 </p>
+              </div>
+
+              {/* Expanded Coverage Info */}
+              <div className="bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded-lg p-4">
+                <div className="flex items-center space-x-2 mb-3">
+                  <div className="w-5 h-5 bg-green-600 rounded-full flex items-center justify-center">
+                    <Database className="w-3 h-3 text-white" />
+                  </div>
+                  <span className="font-semibold text-green-900">
+                    Expanded Coverage 2025 {isMobile ? '📱' : '💻'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="text-green-700">
+                    <strong>{CONFIG_SUMMARY.totalTokens}</strong> Tokens
+                  </div>
+                  <div className="text-blue-700">
+                    <strong>{CONFIG_SUMMARY.totalSpenders}</strong> Protocols
+                  </div>
+                  <div className="text-purple-700">
+                    <strong>{CONFIG_SUMMARY.totalCombinations}</strong> Combinations
+                  </div>
+                  <div className="text-orange-700">
+                    <strong>Real-time</strong> Scanning
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-gray-600">
+                  DEXs • Lending • Bridges • Aggregators • Yield Farming
+                </div>
               </div>
 
               {isFarcasterApp && (
@@ -508,7 +586,7 @@ function BlockitApp() {
                 ) : (
                   <>
                     <Shield className="w-5 h-5" />
-                    <span>Connect & Scan REAL Blockchain</span>
+                    <span>Connect & Scan {CONFIG_SUMMARY.totalCombinations} Combinations</span>
                   </>
                 )}
               </button>
@@ -531,8 +609,10 @@ function BlockitApp() {
                       <div><strong>Connector Names:</strong> {connectors.map(c => c.name).join(', ')}</div>
                       <div><strong>Is Connected:</strong> {isConnected ? '✅ Yes' : '❌ No'}</div>
                       <div><strong>Address:</strong> {address || 'Not connected'}</div>
-                      <div><strong>Blockchain Scanner:</strong> ✅ REAL Contract Calls</div>
+                      <div><strong>Total Tokens:</strong> {CONFIG_SUMMARY.totalTokens}</div>
+                      <div><strong>Total Spenders:</strong> {CONFIG_SUMMARY.totalSpenders}</div>
                       <div><strong>Contract Calls:</strong> {contractCalls.length} prepared</div>
+                      <div><strong>Risk Distribution:</strong> Low: {CONFIG_SUMMARY.riskDistribution.low}, Med: {CONFIG_SUMMARY.riskDistribution.medium}, High: {CONFIG_SUMMARY.riskDistribution.high}</div>
                       <div><strong>Loading Contracts:</strong> {isLoadingContracts ? 'Yes' : 'No'}</div>
                       {error && <div><strong>Status:</strong> {error}</div>}
                     </div>
@@ -549,7 +629,7 @@ function BlockitApp() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Stats Dashboard */}
+            {/* Enhanced Stats Dashboard */}
             <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
               <div className="grid grid-cols-2 gap-4 mb-4">
                 <div className="text-center">
@@ -561,10 +641,14 @@ function BlockitApp() {
                   <div className="text-xs text-gray-500">High Risk</div>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200">
+              <div className="grid grid-cols-3 gap-2 pt-4 border-t border-gray-200">
                 <div className="text-center">
                   <div className="text-lg font-bold text-green-600">{revokedCount}</div>
                   <div className="text-xs text-gray-500">Revoked</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-bold text-yellow-600">{mediumRiskApprovals.length}</div>
+                  <div className="text-xs text-gray-500">Med Risk</div>
                 </div>
                 <div className="text-center">
                   <div className="text-lg font-bold text-blue-600">
@@ -575,7 +659,7 @@ function BlockitApp() {
               </div>
             </div>
 
-            {/* Connected Address */}
+            {/* Enhanced Connected Address */}
             <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
               <div className="flex items-center justify-between">
                 <div>
@@ -588,27 +672,47 @@ function BlockitApp() {
                   <p className="text-sm text-gray-500">Base Mainnet</p>
                   <p className="text-sm font-medium text-green-600 flex items-center">
                     <Zap className="w-3 h-3 mr-1" />
-                    REAL Blockchain
+                    {CONFIG_SUMMARY.totalCombinations} Checks
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Scanning State */}
+            {/* Enhanced Scanning State with Progress */}
             {(isScanning || isLoadingContracts) && (
               <div className="flex items-center justify-center py-12">
                 <div className="text-center">
                   <Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
                   <p className="text-gray-600">Scanning Base blockchain...</p>
-                  <p className="text-sm text-gray-500 mt-1">Making REAL contract calls ({contractCalls.length} checks)</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Checking {CONFIG_SUMMARY.totalTokens} tokens × {CONFIG_SUMMARY.totalSpenders} protocols
+                  </p>
+                  {scanProgress.total > 0 && (
+                    <div className="mt-3">
+                      <div className="bg-gray-200 rounded-full h-2 w-48 mx-auto">
+                        <div 
+                          className="bg-blue-600 h-2 rounded-full transition-all"
+                          style={{ width: `${Math.min((scanProgress.current / scanProgress.total) * 100, 100)}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {Math.min(scanProgress.current, scanProgress.total)} / {scanProgress.total} combinations
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* Approvals List */}
+            {/* Enhanced Approvals List */}
             {!isScanning && !isLoadingContracts && approvals.length > 0 && (
               <div className="space-y-4">
-                <h3 className="font-semibold text-gray-900">REAL Token Approvals Found</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-gray-900">REAL Token Approvals Found</h3>
+                  <div className="text-sm text-gray-500">
+                    {approvals.length} of {CONFIG_SUMMARY.totalCombinations} checked
+                  </div>
+                </div>
                 {approvals.map(approval => (
                   <ApprovalCard
                     key={approval.id}
@@ -620,13 +724,18 @@ function BlockitApp() {
               </div>
             )}
 
-            {/* Empty State */}
+            {/* Enhanced Empty State */}
             {!isScanning && !isLoadingContracts && approvals.length === 0 && (
               <div className="text-center py-12">
                 <Shield className="w-16 h-16 text-green-500 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">Blockchain Verified Secure! 🎉</h3>
                 <p className="text-gray-600">No real token approvals found on Base network.</p>
-                <p className="text-sm text-gray-500 mt-2">Scanned {contractCalls.length} contract combinations</p>
+                <p className="text-sm text-gray-500 mt-2">
+                  Scanned {CONFIG_SUMMARY.totalTokens} tokens across {CONFIG_SUMMARY.totalSpenders} protocols
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  ({CONFIG_SUMMARY.totalCombinations} contract combinations checked)
+                </p>
               </div>
             )}
 
