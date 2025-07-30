@@ -1,17 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, AlertTriangle, Check, Loader, ExternalLink, Trash2, Zap, DollarSign, Wifi, WifiOff } from 'lucide-react';
+import { ethers } from 'ethers';
+import { TokenScanner } from './lib/TokenScanner';
+import { ApprovalRevoker } from './lib/ApprovalRevoker';
+import { ApprovalCard } from './components/ApprovalCard';
+import { TokenApproval } from './types';
 
-// Base network configuration
 const BASE_CHAIN_ID = 8453;
-const BASE_RPC_URL = 'https://mainnet.base.org';
 
 function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [userAddress, setUserAddress] = useState('');
   const [networkStatus, setNetworkStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+  const [approvals, setApprovals] = useState<TokenApproval[]>([]);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isRevoking, setIsRevoking] = useState<string | null>(null);
+  const [revokedCount, setRevokedCount] = useState(0);
+  const [provider, setProvider] = useState<ethers.providers.Web3Provider | null>(null);
+  const [signer, setSigner] = useState<ethers.Signer | null>(null);
+  const [error, setError] = useState('');
 
-  // Check wallet availability on component mount
   useEffect(() => {
     checkWalletAvailability();
   }, []);
@@ -31,59 +40,115 @@ function App() {
   const connectWallet = async () => {
     try {
       setIsLoading(true);
+      setError('');
       
       if (!window.ethereum) {
-        alert('Please install MetaMask or use a Web3 browser!');
-        return;
+        throw new Error('Please install MetaMask or use a Web3 browser!');
       }
 
-      // Request account access
-      const accounts = await window.ethereum.request({ 
-        method: 'eth_requestAccounts' 
-      });
+      const web3Provider = new ethers.providers.Web3Provider(window.ethereum);
+      const accounts = await web3Provider.send('eth_requestAccounts', []);
       
       if (accounts.length > 0) {
-        setUserAddress(accounts[0]);
-        setIsConnected(true);
-        
-        // Try to switch to Base network
+        // Switch to Base network
         try {
           await window.ethereum.request({
             method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x2105' }], // Base chain ID
+            params: [{ chainId: '0x2105' }],
           });
         } catch (switchError: any) {
-          // Add Base network if not found
           if (switchError.code === 4902) {
             await window.ethereum.request({
               method: 'wallet_addEthereumChain',
               params: [{
                 chainId: '0x2105',
                 chainName: 'Base',
-                nativeCurrency: {
-                  name: 'Ethereum',
-                  symbol: 'ETH',
-                  decimals: 18,
-                },
+                nativeCurrency: { name: 'Ethereum', symbol: 'ETH', decimals: 18 },
                 rpcUrls: ['https://mainnet.base.org'],
                 blockExplorerUrls: ['https://basescan.org'],
               }],
             });
           }
         }
+
+        const web3Signer = web3Provider.getSigner();
+        const address = await web3Signer.getAddress();
+        
+        setProvider(web3Provider);
+        setSigner(web3Signer);
+        setUserAddress(address);
+        setIsConnected(true);
+
+        // Start scanning
+        await scanApprovals(web3Provider, address);
       }
-    } catch (error) {
+    } catch (error: any) {
+      setError(error.message || 'Failed to connect wallet');
       console.error('Wallet connection failed:', error);
-      alert('Failed to connect wallet. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const disconnect = () => {
-    setIsConnected(false);
-    setUserAddress('');
+  const scanApprovals = async (web3Provider: ethers.providers.Web3Provider, address: string) => {
+    try {
+      setIsScanning(true);
+      setError('');
+      
+      const scanner = new TokenScanner(web3Provider, address);
+      const foundApprovals = await scanner.scanTokenApprovals();
+      
+      setApprovals(foundApprovals);
+      
+      if (foundApprovals.length === 0) {
+        setError('No token approvals found. Your wallet is secure! 🎉');
+      }
+    } catch (err: any) {
+      setError(`Failed to scan approvals: ${err.message}`);
+      console.error('Scan error:', err);
+    } finally {
+      setIsScanning(false);
+    }
   };
+
+  const handleRevokeApproval = async (approval: TokenApproval) => {
+    if (!signer) return;
+    
+    try {
+      setIsRevoking(approval.id);
+      setError('');
+
+      const revoker = new ApprovalRevoker(signer);
+      const gasInfo = await revoker.estimateGas(approval.tokenAddress, approval.spender);
+      
+      // Confirm with user
+      if (gasInfo.usdEstimate > 5) {
+        const confirmed = window.confirm(`This will cost approximately $${gasInfo.usdEstimate.toFixed(4)} in gas fees. Continue?`);
+        if (!confirmed) {
+          setIsRevoking(null);
+          return;
+        }
+      }
+
+      const { transaction } = await revoker.revokeApproval(approval.tokenAddress, approval.spender);
+      
+      // Wait for confirmation
+      await transaction.wait();
+      
+      // Remove from list and update counters
+      setApprovals(prev => prev.filter(a => a.id !== approval.id));
+      setRevokedCount(prev => prev + 1);
+      
+    } catch (err: any) {
+      setError(`Failed to revoke approval: ${err.message}`);
+      console.error('Revoke error:', err);
+    } finally {
+      setIsRevoking(null);
+    }
+  };
+
+  const highRiskApprovals = approvals.filter(a => a.riskLevel === 'high');
+  const totalValue = approvals.reduce((acc, approval) => acc + approval.estimatedValue, 0);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -101,7 +166,6 @@ function App() {
               </div>
             </div>
             
-            {/* Network Status */}
             <div className="flex items-center space-x-2">
               {networkStatus === 'checking' ? (
                 <Loader className="w-4 h-4 text-gray-400 animate-spin" />
@@ -122,22 +186,6 @@ function App() {
         {!isConnected ? (
           /* Connection Screen */
           <div className="space-y-6">
-            {/* Status Card */}
-            <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200">
-              <div className="text-center">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Check className="w-8 h-8 text-green-600" />
-                </div>
-                <h2 className="text-xl font-semibold text-gray-900 mb-2">
-                  ✅ App Loaded Successfully!
-                </h2>
-                <p className="text-gray-600 mb-4">
-                  React app with Lucide icons working properly! 🚀
-                </p>
-              </div>
-            </div>
-
-            {/* Hero Section */}
             <div className="text-center space-y-6">
               <div className="w-20 h-20 bg-gradient-to-br from-red-500 to-pink-600 rounded-full flex items-center justify-center mx-auto">
                 <Shield className="w-10 h-10 text-white" />
@@ -149,7 +197,6 @@ function App() {
                 </p>
               </div>
 
-              {/* Base Network Benefits */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-left">
                 <h3 className="font-semibold text-blue-900 mb-2 flex items-center">
                   <Zap className="w-4 h-4 mr-2" />
@@ -171,7 +218,6 @@ function App() {
                 </ul>
               </div>
 
-              {/* Connect Button */}
               <button
                 onClick={connectWallet}
                 disabled={isLoading || networkStatus !== 'connected'}
@@ -195,24 +241,47 @@ function App() {
                 )}
               </button>
 
-              {networkStatus !== 'connected' && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                  <p className="text-yellow-700 text-sm">
-                    <AlertTriangle className="w-4 h-4 inline mr-2" />
-                    Please install MetaMask or use a Web3 browser to continue.
-                  </p>
+              {error && !isConnected && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  <p className="text-red-700 text-sm">{error}</p>
                 </div>
               )}
             </div>
           </div>
         ) : (
-          /* Connected State */
+          /* Main App */
           <div className="space-y-6">
-            {/* Connected Status */}
+            {/* Stats Dashboard */}
+            <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-gray-900">{approvals.length}</div>
+                  <div className="text-xs text-gray-500">Active Approvals</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-red-600">{highRiskApprovals.length}</div>
+                  <div className="text-xs text-gray-500">High Risk</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200">
+                <div className="text-center">
+                  <div className="text-lg font-bold text-green-600">{revokedCount}</div>
+                  <div className="text-xs text-gray-500">Revoked</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-bold text-blue-600">
+                    ${totalValue > 1000000 ? '1M+' : totalValue.toLocaleString()}
+                  </div>
+                  <div className="text-xs text-gray-500">At Risk</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Connected Address */}
             <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-500">Connected Address</p>
+                  <p className="text-sm text-gray-500">Scanning Address</p>
                   <p className="font-mono text-sm text-gray-900">
                     {userAddress.slice(0, 6)}...{userAddress.slice(-4)}
                   </p>
@@ -227,47 +296,89 @@ function App() {
               </div>
             </div>
 
-            {/* Scan Coming Soon */}
-            <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200 text-center">
-              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Loader className="w-8 h-8 text-blue-600 animate-spin" />
+            {/* High Risk Alert */}
+            {highRiskApprovals.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="flex items-center space-x-2 mb-2">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                  <span className="font-semibold text-red-800">
+                    {highRiskApprovals.length} High Risk Approval{highRiskApprovals.length > 1 ? 's' : ''} Detected
+                  </span>
+                </div>
+                <p className="text-red-700 text-sm">
+                  These approvals may pose a security risk. Consider revoking them immediately.
+                </p>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                🔍 Token Approval Scanner
-              </h3>
-              <p className="text-gray-600 mb-4">
-                Ready to scan for token approvals! Full scanning functionality coming next.
-              </p>
-              <button
-                onClick={() => alert('🚀 Wallet connected! Token scanning will be added next.')}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium"
-              >
-                Test Scan (Demo)
-              </button>
-            </div>
+            )}
 
-            {/* Disconnect */}
-            <div className="text-center">
-              <button
-                onClick={disconnect}
-                className="text-gray-500 hover:text-gray-700 text-sm flex items-center justify-center space-x-1 mx-auto"
-              >
-                <ExternalLink className="w-4 h-4" />
-                <span>Disconnect Wallet</span>
-              </button>
+            {/* Loading State */}
+            {isScanning && (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
+                  <p className="text-gray-600">Scanning blockchain for token approvals...</p>
+                  <p className="text-sm text-gray-500 mt-1">This may take a few moments</p>
+                </div>
+              </div>
+            )}
+
+            {/* Approvals List */}
+            {!isScanning && approvals.length > 0 && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-gray-900">Token Approvals</h3>
+                  <span className="text-sm text-gray-500">Sorted by risk & value</span>
+                </div>
+                {approvals.map(approval => (
+                  <ApprovalCard
+                    key={approval.id}
+                    approval={approval}
+                    onRevoke={handleRevokeApproval}
+                    isRevoking={isRevoking === approval.id}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Empty State */}
+            {!isScanning && approvals.length === 0 && !error && (
+              <div className="text-center py-12">
+                <Shield className="w-16 h-16 text-green-500 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">All Secure! 🎉</h3>
+                <p className="text-gray-600">No risky token approvals found on your wallet.</p>
+              </div>
+            )}
+
+            {/* Error Display */}
+            {error && isConnected && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <p className="text-red-700 text-sm">{error}</p>
+              </div>
+            )}
+
+            {/* Gas Info */}
+            {isConnected && !isScanning && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Zap className="w-5 h-5 text-green-600" />
+                  <span className="font-semibold text-green-800">Base Network Advantage</span>
+                </div>
+                <p className="text-green-700 text-sm">
+                  Revoke approvals for ~$0.01 each thanks to Base's ultra-low gas fees. 
+                  Total estimated cost for all revokes: ~${(approvals.length * 0.01).toFixed(2)}
+                </p>
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="text-center pt-6 border-t border-gray-200">
+              <p className="text-xs text-gray-500 mb-1">Always verify transactions before signing</p>
+              <p className="text-xs text-gray-400">
+                Built for Base Network • Real blockchain scanning • Live data 🚀
+              </p>
             </div>
           </div>
         )}
-
-        {/* Footer */}
-        <div className="text-center pt-6 border-t border-gray-200 mt-6">
-          <p className="text-xs text-gray-500 mb-1">
-            Always verify transactions before signing
-          </p>
-          <p className="text-xs text-gray-400">
-            Built for Base Network • Real blockchain integration • Icons working! ✨
-          </p>
-        </div>
       </div>
     </div>
   );
