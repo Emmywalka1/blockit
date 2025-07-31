@@ -1,0 +1,31 @@
+{
+  "accountAssociation": {
+    "header": "eyJmaWQiOjQyODcyNSwidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweDIyMzk4RjAzZWQ2MDM1Mjk5Njk5NDI2OTlCNzgyMTIyNDk4M0QwMjQifQ",
+    "payload": "eyJkb21haW4iOiJibG9ja2l0LXR3by52ZXJjZWwuYXBwIn0", 
+    "signature": "MHg2MzAyYjk1ZmQ2ZDk5NjAxNTRkOGRkZTQwODk0MzA0MzM5MDQ5YzYwMGQ4NTJiNzZiZjE0N2FhYTE5MjllOWYyMDAxZWM1MjJhMTg4YTkwYzhlY2VkOWI2NGI1OTU5NzkxNjFlOWQ1MWU2NTRhY2U3Y2YzYTJmMDJjMjEzMjkzODFi"
+  },
+  "miniapp": {
+    "version": "1",
+    "name": "Blockit",
+    "iconUrl": "https://blockit-two.vercel.app/blockit-icon.png",
+    "homeUrl": "https://blockit-two.vercel.app",
+    "imageUrl": "https://blockit-two.vercel.app/og-image.png",
+    "buttonTitle": "🛡️ Scan Approvals",
+    "splashImageUrl": "https://blockit-two.vercel.app/blockit-splash.png",
+    "splashBackgroundColor": "#ef4444",
+    "description": "Scan and revoke risky token approvals on Base network to keep your funds safe from malicious contracts.",
+    "screenshotUrls": [
+      "https://blockit-two.vercel.app/screenshot1.png",
+      "https://blockit-two.vercel.app/screenshot2.png", 
+      "https://blockit-two.vercel.app/screenshot3.png"
+    ],
+    "primaryCategory": "finance",
+    "tags": [
+      "security",
+      "defi", 
+      "base",
+      "revoke",
+      "approvals"
+    ]
+  }
+}
