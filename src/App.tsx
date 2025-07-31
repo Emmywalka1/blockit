@@ -641,20 +641,6 @@ function BlockitApp() {
                 </p>
               </div>
 
-              {isFarcasterApp && (
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                  <div className="flex items-center space-x-2 mb-2">
-                    <div className="w-5 h-5 bg-purple-600 rounded-full flex items-center justify-center">
-                      <span className="text-white text-xs">🎯</span>
-                    </div>
-                    <span className="font-semibold text-purple-900">Farcaster Wallet Ready</span>
-                  </div>
-                  <p className="text-sm text-purple-800">
-                    Using Farcaster's built-in wallet. Click connect to access your Base wallet seamlessly.
-                  </p>
-                </div>
-              )}
-
               <button
                 onClick={handleConnect}
                 disabled={isConnecting}
@@ -668,7 +654,7 @@ function BlockitApp() {
                 ) : (
                   <>
                     <Shield className="w-5 h-5" />
-                    <span>{isFarcasterApp ? 'Connect Farcaster Wallet' : 'Connect & Discover Tokens'}</span>
+                    <span>Connect & Discover Tokens</span>
                   </>
                 )}
               </button>
@@ -698,7 +684,7 @@ function BlockitApp() {
                   <p className="text-red-700 text-sm">{error}</p>
                   
                   {/* Wallet Installation Guide */}
-                  {error.includes('No wallet') && !isFarcasterApp && (
+                  {error.includes('No wallet') && (
                     <div className="mt-3 pt-3 border-t border-red-200">
                       <p className="text-red-800 font-medium text-sm mb-2">Install a wallet to continue:</p>
                       <div className="space-y-2">
@@ -728,15 +714,6 @@ function BlockitApp() {
                           </p>
                         )}
                       </div>
-                    </div>
-                  )}
-
-                  {/* Farcaster-specific error message */}
-                  {error.includes('Farcaster wallet') && isFarcasterApp && (
-                    <div className="mt-3 pt-3 border-t border-red-200">
-                      <p className="text-red-800 font-medium text-sm">
-                        💡 Try refreshing the mini app or check if your Farcaster wallet is set up for Base network.
-                      </p>
                     </div>
                   )}
                 </div>
