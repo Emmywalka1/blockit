@@ -95,7 +95,7 @@ interface TokenApproval {
 // ENHANCED BaseScan API service for comprehensive token discovery
 class BaseTokenDiscoveryService {
   private apiKey: string = 'CV4WNTY3QMPMABJVXJYVCK3ZZ419XT9Z9M'; // Default API key
-  private baseUrl: string = 'https://api.basescan.org/api';
+  private baseUrl: string = 'https://api.etherscan.io/v2/api?chainid=8453';
 
   async discoverUserTokens(address: string): Promise<DiscoveredToken[]> {
     try {
@@ -103,7 +103,7 @@ class BaseTokenDiscoveryService {
       
       // Get ALL ERC-20 token transactions (not just recent ones)
       const response = await fetch(
-        `${this.baseUrl}?module=account&action=tokentx&address=${address}&startblock=0&endblock=latest&sort=desc&apikey=${this.apiKey}`
+        `${this.baseUrl}&module=account&action=tokentx&address=${address}&startblock=0&endblock=latest&sort=desc&apikey=${this.apiKey}`
       );
       
       const data = await response.json();
@@ -167,7 +167,7 @@ class BaseTokenDiscoveryService {
   async getTokenBalance(tokenAddress: string, userAddress: string): Promise<string> {
     try {
       const response = await fetch(
-        `${this.baseUrl}?module=account&action=tokenbalance&contractaddress=${tokenAddress}&address=${userAddress}&tag=latest&apikey=${this.apiKey}`
+        `${this.baseUrl}&module=account&action=tokenbalance&contractaddress=${tokenAddress}&address=${userAddress}&tag=latest&apikey=${this.apiKey}`
       );
       
       const data = await response.json();
