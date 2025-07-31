@@ -53,49 +53,65 @@ function BlockitApp(): React.JSX.Element {
   // Initialize Farcaster SDK
   useEffect(() => {
     initializeFarcasterApp();
-  }, []);
+    
+    // Safety timeout to ensure splash screen is dismissed
+    const safetyTimeout = setTimeout(() => {
+      if (!sdkReady) {
+        console.log('⏰ Safety timeout - forcing app to show');
+        setSdkReady(true);
+      }
+    }, 3000); // 3 second timeout
+    
+    return () => clearTimeout(safetyTimeout);
+  }, [sdkReady]);
 
   const initializeFarcasterApp = async () => {
+    console.log('🚀 Initializing Blockit Farcaster Mini App...');
+    
     try {
-      console.log('🚀 Initializing Blockit Farcaster Mini App...');
-      
+      // Check if we're in a browser environment
       if (typeof window === 'undefined') {
-        console.warn('Not in browser environment');
+        console.log('❌ Not in browser environment');
         setSdkReady(true);
         return;
       }
 
-      // Try to initialize Farcaster SDK
-      if (sdk) {
+      // Try to call ready() - this is CRITICAL to dismiss splash screen
+      if (sdk && sdk.actions && sdk.actions.ready) {
+        console.log('📱 Calling sdk.actions.ready()...');
+        await sdk.actions.ready({
+          disableNativeGestures: false
+        });
+        console.log('✅ sdk.actions.ready() called successfully');
+        
+        // Try to get Farcaster context after ready() succeeds
         try {
-          await sdk.actions.ready({
-            disableNativeGestures: false
-          });
-          
-          // Get Farcaster context if available
-          try {
-            const context = await sdk.context;
-            setFarcasterContext(context);
-            console.log('📱 Farcaster context:', context);
-          } catch (contextError) {
-            console.log('No Farcaster context available');
-          }
-
-          console.log('✅ Farcaster SDK initialized successfully');
-        } catch (sdkError: any) {
-          console.warn('⚠️ Farcaster SDK initialization failed:', sdkError.message);
-          // Continue anyway - app should work without SDK
+          const context = await sdk.context;
+          setFarcasterContext(context);
+          console.log('📱 Farcaster context retrieved:', context);
+        } catch (contextError) {
+          console.log('ℹ️ No Farcaster context available (running outside Farcaster)');
+        }
+      } else if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+        // We might be in an iframe but SDK failed to load
+        console.log('🔄 In iframe context but SDK unavailable - attempting manual ready signal');
+        try {
+          // Try to send ready message directly to parent
+          window.parent.postMessage({ type: 'miniapp-ready' }, '*');
+        } catch (e) {
+          console.log('Could not send ready message to parent');
         }
       } else {
-        console.log('📱 Farcaster SDK not available - running in standalone mode');
+        console.log('⚠️ Farcaster SDK not available - running in standalone mode');
       }
       
-      setSdkReady(true);
-      console.log('✅ Blockit initialization complete');
-      
     } catch (error: any) {
-      console.error('❌ App initialization failed:', error);
-      setSdkReady(true); // Set to true anyway to show the app
+      console.error('❌ SDK initialization error:', error);
+      // Even if everything fails, we must show the app
+    } finally {
+      // ALWAYS set ready to true - this is the final fallback
+      setSdkReady(true);
+      console.log('✅ App ready - splash screen dismissed');
     }
   };
 
@@ -154,13 +170,21 @@ function BlockitApp(): React.JSX.Element {
   if (!sdkReady) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
-        <div className="text-center">
+        <div className="text-center max-w-sm mx-auto px-4">
           <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4">
             <Shield className="w-8 h-8 text-white" />
           </div>
           <Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
           <p className="text-gray-600 font-medium">Initializing Blockit...</p>
-          <p className="text-sm text-gray-500">Token Approval Security for Base</p>
+          <p className="text-sm text-gray-500 mb-2">Token Approval Security for Base</p>
+          <p className="text-xs text-gray-400">Calling sdk.actions.ready()...</p>
+          
+          {/* Debug info */}
+          <div className="mt-4 text-xs text-gray-400 space-y-1">
+            <div>SDK Available: {sdk ? 'Yes' : 'No'}</div>
+            <div>Window: {typeof window !== 'undefined' ? 'Ready' : 'Not Ready'}</div>
+            <div>In Frame: {typeof window !== 'undefined' && window.parent !== window ? 'Yes' : 'No'}</div>
+          </div>
         </div>
       </div>
     );
