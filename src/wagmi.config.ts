@@ -30,8 +30,6 @@ export const config = createConfig({
 
 console.log('🔧 Wagmi configured for Base network');
 
-export { base as baseChain };
-
 console.log('🔧 Wagmi configured for Base network with smart wallet detection');
 
 export { base as baseChain };
