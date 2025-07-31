@@ -1,5 +1,3 @@
-
-
 import React, { useState } from 'react'
 import { useRealApprovalScanner } from '../hooks/useRealApprovalScanner'
 import { Shield, AlertTriangle, Check, Filter, BarChart3, ExternalLink } from 'lucide-react'
