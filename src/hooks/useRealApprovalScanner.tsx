@@ -1,6 +1,4 @@
-
-
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useAccount, useReadContracts } from 'wagmi'
 import { formatUnits } from 'viem'
 
@@ -109,7 +107,7 @@ export function useRealApprovalScanner() {
   }, [address])
 
   // Execute contract calls using wagmi
-  const contractCalls = prepareContractCalls()
+  const contractCalls = useMemo(() => prepareContractCalls(), [prepareContractCalls])
   const { 
     data: contractResults, 
     isLoading: isLoadingContracts, 
@@ -146,7 +144,7 @@ export function useRealApprovalScanner() {
   }, [address])
 
   // Process contract results when they're available
-  React.useEffect(() => {
+  useEffect(() => {
     if (contractResults && address && !isLoadingContracts) {
       console.log('Processing expanded blockchain contract results...')
       
@@ -270,7 +268,7 @@ export function useRealApprovalScanner() {
   }, [contractResults, isLoadingContracts, address, contractError])
 
   // Auto-start scanning when conditions are met
-  React.useEffect(() => {
+  useEffect(() => {
     if (address && contractCalls.length > 0 && !isScanning && !scanStats) {
       console.log('Auto-starting comprehensive approval scan...')
       scanForRealApprovals()
@@ -278,7 +276,7 @@ export function useRealApprovalScanner() {
   }, [address, contractCalls.length, scanForRealApprovals, isScanning, scanStats])
 
   // Update loading state
-  React.useEffect(() => {
+  useEffect(() => {
     if (isLoadingContracts && !isScanning) {
       setIsScanning(true)
     } else if (!isLoadingContracts && isScanning && contractResults) {
