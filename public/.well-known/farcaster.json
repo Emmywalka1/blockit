@@ -3,18 +3,9 @@
     "header": "eyJmaWQiOjQyODcyNSwidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweDIyMzk4RjAzZWQ2MDM1Mjk5Njk5NDI2OTlCNzgyMTIyNDk4M0QwMjQifQ",
     "payload": "eyJkb21haW4iOiJibG9ja2l0LXR3by52ZXJjZWwuYXBwIn0", 
     "signature": "MHg2MzAyYjk1ZmQ2ZDk5NjAxNTRkOGRkZTQwODk0MzA0MzM5MDQ5YzYwMGQ4NTJiNzZiZjE0N2FhYTE5MjllOWYyMDAxZWM1MjJhMTg4YTkwYzhlY2VkOWI2NGI1OTU5NzkxNjFlOWQ1MWU2NTRhY2U3Y2YzYTJmMDJjMjEzMjkzODFi"
-  },
-  "frame": {
-    "name": "Blockit",
-    "iconUrl": "https://blockit-two.vercel.app/assets/blockit-icon.png",
-    "homeUrl": "https://blockit-two.vercel.app",
-    "imageUrl": "https://blockit-two.vercel.app/assets/og-image.png",
-    "splashImageUrl": "https://blockit-two.vercel.app/assets/blockit-splash.png",
-    "splashBackgroundColor": "#ef4444",
-    "webhookUrl": "https://blockit-two.vercel.app/api/webhook"
-  },
+ },
   "miniapp": {
-    "version": "1",
+    "version": "next",
     "name": "Blockit Pro - Personal Token Security",
     "description": "Automatically discover tokens in your wallet and scan only those for risky approvals. More efficient, more personal, more secure.",
     "icon": "https://blockit-two.vercel.app/assets/blockit-icon.png",
