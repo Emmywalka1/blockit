@@ -52,17 +52,54 @@ function BlockitApp(): React.JSX.Element {
 
   // Initialize Farcaster SDK
   useEffect(() => {
-    initializeFarcasterApp();
+    // Detect CSP restrictions and show app immediately if detected
+    const hasCSPRestrictions = () => {
+      try {
+        // Try to detect if we're in a restricted environment
+        if (typeof window !== 'undefined') {
+          // Check for CSP violations in console (this is a heuristic)
+          const meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+          if (meta) {
+            console.log('🛡️ CSP detected, using fast initialization');
+            return true;
+          }
+          
+          // Check if we're in a Farcaster-like environment with restrictions
+          if (window.location.hostname.includes('farcaster') || 
+              window.location.hostname.includes('warpcast')) {
+            console.log('📱 Farcaster environment detected, using optimized loading');
+            return true;
+          }
+        }
+        return false;
+      } catch (e) {
+        return true; // If we can't check, assume restricted
+      }
+    };
+
+    if (hasCSPRestrictions()) {
+      // In restricted environments, show app quickly and try ready signals in background
+      console.log('⚡ Fast initialization for restricted environment');
+      setTimeout(() => setSdkReady(true), 200);
+      
+      // Try ready signals in background
+      setTimeout(() => {
+        initializeFarcasterApp();
+      }, 100);
+    } else {
+      // Normal initialization for unrestricted environments
+      initializeFarcasterApp();
+    }
     
-    // Safety timeout to ensure splash screen is dismissed
-    const safetyTimeout = setTimeout(() => {
+    // Ultimate fallback timeout
+    const emergencyTimeout = setTimeout(() => {
       if (!sdkReady) {
-        console.log('⏰ Safety timeout - forcing app to show');
+        console.log('🚨 Emergency timeout - forcing app display');
         setSdkReady(true);
       }
-    }, 3000); // 3 second timeout
+    }, 1500);
     
-    return () => clearTimeout(safetyTimeout);
+    return () => clearTimeout(emergencyTimeout);
   }, [sdkReady]);
 
   const initializeFarcasterApp = async () => {
@@ -76,42 +113,92 @@ function BlockitApp(): React.JSX.Element {
         return;
       }
 
-      // Try to call ready() - this is CRITICAL to dismiss splash screen
-      if (sdk && sdk.actions && sdk.actions.ready) {
-        console.log('📱 Calling sdk.actions.ready()...');
-        await sdk.actions.ready({
-          disableNativeGestures: false
-        });
-        console.log('✅ sdk.actions.ready() called successfully');
-        
-        // Try to get Farcaster context after ready() succeeds
+      // Check if SDK loaded properly
+      if (sdkLoadError) {
+        console.log('⚠️ SDK failed to load due to:', sdkLoadError);
+      }
+
+      // Try multiple methods to signal ready
+      let readyCallSucceeded = false;
+
+      // Method 1: Try the official SDK ready() call
+      if (sdk && sdk.actions && typeof sdk.actions.ready === 'function') {
         try {
-          const context = await sdk.context;
-          setFarcasterContext(context);
-          console.log('📱 Farcaster context retrieved:', context);
-        } catch (contextError) {
-          console.log('ℹ️ No Farcaster context available (running outside Farcaster)');
+          console.log('📱 Attempting sdk.actions.ready()...');
+          await Promise.race([
+            sdk.actions.ready({ disableNativeGestures: false }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Ready timeout')), 2000))
+          ]);
+          console.log('✅ sdk.actions.ready() succeeded');
+          readyCallSucceeded = true;
+          
+          // Try to get context after successful ready
+          try {
+            const context = await sdk.context;
+            setFarcasterContext(context);
+            console.log('📱 Farcaster context retrieved:', context);
+          } catch (contextError) {
+            console.log('ℹ️ No Farcaster context available');
+          }
+        } catch (readyError: any) {
+          console.warn('❌ sdk.actions.ready() failed:', readyError.message);
         }
-      } else if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
-        // We might be in an iframe but SDK failed to load
-        console.log('🔄 In iframe context but SDK unavailable - attempting manual ready signal');
+      }
+
+      // Method 2: Try postMessage to parent if in iframe
+      if (!readyCallSucceeded && typeof window !== 'undefined' && window.parent && window.parent !== window) {
         try {
-          // Try to send ready message directly to parent
-          window.parent.postMessage({ type: 'miniapp-ready' }, '*');
-        } catch (e) {
-          console.log('Could not send ready message to parent');
+          console.log('📤 Sending manual ready signal to parent...');
+          window.parent.postMessage({ 
+            type: 'miniapp-ready',
+            source: 'blockit'
+          }, '*');
+          
+          // Also try the standard frame ready message
+          window.parent.postMessage({
+            type: 'farcaster:frame:ready',
+            data: { disableNativeGestures: false }
+          }, '*');
+          
+          console.log('✅ Manual ready signals sent');
+          readyCallSucceeded = true;
+        } catch (postMessageError) {
+          console.warn('❌ PostMessage failed:', postMessageError);
         }
-      } else {
-        console.log('⚠️ Farcaster SDK not available - running in standalone mode');
+      }
+
+      // Method 3: Try dispatching custom event
+      if (!readyCallSucceeded) {
+        try {
+          console.log('📡 Dispatching ready event...');
+          window.dispatchEvent(new CustomEvent('miniapp-ready', {
+            detail: { source: 'blockit' }
+          }));
+          
+          // Also try document ready event
+          document.dispatchEvent(new CustomEvent('farcaster-ready', {
+            detail: { disableNativeGestures: false }
+          }));
+          
+          console.log('✅ Ready events dispatched');
+          readyCallSucceeded = true;
+        } catch (eventError) {
+          console.warn('❌ Event dispatch failed:', eventError);
+        }
+      }
+
+      if (!readyCallSucceeded) {
+        console.log('⚠️ All ready signal methods failed - will rely on timeout');
       }
       
     } catch (error: any) {
-      console.error('❌ SDK initialization error:', error);
-      // Even if everything fails, we must show the app
+      console.error('❌ Initialization error:', error);
     } finally {
-      // ALWAYS set ready to true - this is the final fallback
-      setSdkReady(true);
-      console.log('✅ App ready - splash screen dismissed');
+      // Always show the app after 500ms to ensure quick loading
+      setTimeout(() => {
+        setSdkReady(true);
+        console.log('✅ App ready - splash screen dismissed');
+      }, 500);
     }
   };
 
@@ -177,13 +264,18 @@ function BlockitApp(): React.JSX.Element {
           <Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
           <p className="text-gray-600 font-medium">Initializing Blockit...</p>
           <p className="text-sm text-gray-500 mb-2">Token Approval Security for Base</p>
-          <p className="text-xs text-gray-400">Calling sdk.actions.ready()...</p>
+          <p className="text-xs text-gray-400">Attempting multiple ready signals...</p>
           
-          {/* Debug info */}
+          {/* Debug info for CSP issues */}
           <div className="mt-4 text-xs text-gray-400 space-y-1">
-            <div>SDK Available: {sdk ? 'Yes' : 'No'}</div>
-            <div>Window: {typeof window !== 'undefined' ? 'Ready' : 'Not Ready'}</div>
-            <div>In Frame: {typeof window !== 'undefined' && window.parent !== window ? 'Yes' : 'No'}</div>
+            <div>SDK Status: {sdkLoadError ? 'Failed' : sdk ? 'Loaded' : 'Not Available'}</div>
+            {sdkLoadError && <div className="text-red-400">Error: CSP Restriction</div>}
+            <div>Environment: {typeof window !== 'undefined' && window.parent !== window ? 'Farcaster Frame' : 'Standalone'}</div>
+            <div>Ready Methods: SDK, PostMessage, Events</div>
+          </div>
+          
+          <div className="mt-3 w-full bg-gray-200 rounded-full h-1">
+            <div className="bg-blue-600 h-1 rounded-full animate-pulse" style={{width: '60%'}}></div>
           </div>
         </div>
       </div>
