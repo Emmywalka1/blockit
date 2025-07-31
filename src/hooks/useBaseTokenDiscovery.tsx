@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useAccount, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { formatUnits } from 'viem'
 import { 
@@ -255,7 +255,7 @@ export function useBaseTokenDiscovery() {
   const [revokingApprovalId, setRevokingApprovalId] = useState<string | null>(null)
 
   // Initialize discovery service
-  const discoveryService = new BaseTokenDiscoveryService()
+  const discoveryService = useMemo(() => new BaseTokenDiscoveryService(), [])
 
   // Step 1: Combined token discovery (known tokens + transaction history)
   const discoverAllTokens = useCallback(async () => {
@@ -337,10 +337,10 @@ export function useBaseTokenDiscovery() {
       console.error('Token discovery failed:', error)
       throw error
     }
-  }, [address])
+  }, [address, discoveryService])
 
   // Step 2: Check balances for discovered tokens using wagmi
-  const balanceContracts = React.useMemo(() => {
+  const balanceContracts = useMemo(() => {
     if (!address || discoveredTokens.length === 0) return []
     
     return discoveredTokens.map(token => ({
@@ -363,7 +363,7 @@ export function useBaseTokenDiscovery() {
   })
 
   // Step 3: Check approvals for tokens with balance
-  const approvalContracts = React.useMemo(() => {
+  const approvalContracts = useMemo(() => {
     if (!address || discoveredTokens.length === 0) return []
     
     const contracts = []
