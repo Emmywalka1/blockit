@@ -301,87 +301,31 @@ function BlockitApp() {
     }
   };
 
-  // Fixed connect function with Farcaster SDK integration
+  // Fixed connect function using Farcaster miniapp connector
   const handleConnect = async () => {
     try {
       setError('');
       
-      // Check if we're in Farcaster environment
-      if (isFarcasterApp) {
-        console.log('🎯 Connecting via Farcaster SDK...');
-        
-        try {
-          // Check if wallet methods are available
-          if (sdk && sdk.wallet && typeof sdk.wallet.requestPermissions === 'function') {
-            // Request permissions from Farcaster wallet
-            const permissions = await sdk.wallet.requestPermissions();
-            console.log('✅ Farcaster wallet permissions granted:', permissions);
-            
-            // Switch to Base network (chain ID 8453)
-            if (typeof sdk.wallet.switchChain === 'function') {
-              await sdk.wallet.switchChain(8453);
-              console.log('✅ Switched to Base network');
-            }
-            
-            // Get the wallet address
-            if (typeof sdk.wallet.getAddress === 'function') {
-              const address = await sdk.wallet.getAddress();
-              console.log('✅ Connected to Farcaster wallet:', address);
-            }
-            
-            return; // Success - let wagmi handle the rest
-          } else {
-            console.log('⚠️ Farcaster wallet methods not available, falling back to wagmi');
-          }
-          
-        } catch (farcasterError: any) {
-          console.error('❌ Farcaster wallet connection failed:', farcasterError);
-          console.log('🔄 Falling back to wagmi connection...');
-          // Continue to wagmi fallback below
-        }
-      }
-      
-      // Fallback to regular wagmi connection
-      console.log('🔗 Using wagmi wallet connection...');
-      
       if (connectors.length === 0) {
-        throw new Error('No wallet connectors available. Please install MetaMask or use a wallet browser.');
+        setError('No wallet connectors available. Please refresh the app.');
+        return;
       }
 
-      console.log(`🔗 Attempting to connect with ${connectors.length} available connectors`);
+      console.log(`🔗 Connecting with Farcaster miniapp connector`);
       
-      // Try each connector until one works
-      let lastError = null;
-      
-      for (const connector of connectors) {
-        try {
-          console.log(`🎯 Trying connector: ${connector.name}`);
-          await connect({ connector });
-          console.log(`✅ Successfully connected with: ${connector.name}`);
-          return; // Success
-        } catch (err: any) {
-          console.warn(`❌ Connector ${connector.name} failed:`, err.message);
-          lastError = err;
-          // Continue to next connector
-        }
-      }
-      
-      // If we get here, all connectors failed
-      throw lastError || new Error('All wallet connections failed');
+      // Use the first (and only) connector which is the Farcaster miniapp connector
+      await connect({ connector: connectors[0] });
+      console.log(`✅ Successfully connected with Farcaster wallet`);
       
     } catch (err: any) {
       console.error('Connection failed:', err);
       
       let errorMessage = 'Connection failed: ';
       
-      if (err.message?.includes('Provider not found')) {
-        errorMessage = 'No wallet found. Please install MetaMask or use a wallet-enabled browser.';
-      } else if (err.message?.includes('User rejected') || err.message?.includes('User denied')) {
+      if (err.message?.includes('User rejected') || err.message?.includes('User denied')) {
         errorMessage = 'Connection rejected. Please try again and approve the connection.';
       } else if (err.message?.includes('Already processing')) {
         errorMessage = 'Connection in progress. Please wait...';
-      } else if (err.message?.includes('WalletConnect')) {
-        errorMessage = 'WalletConnect service unavailable. Please try again later.';
       } else {
         errorMessage += err.message || 'Unknown error';
       }
@@ -653,20 +597,6 @@ function BlockitApp() {
                 </p>
               </div>
 
-              {isFarcasterApp && (
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                  <div className="flex items-center space-x-2 mb-2">
-                    <div className="w-5 h-5 bg-purple-600 rounded-full flex items-center justify-center">
-                      <span className="text-white text-xs">🎯</span>
-                    </div>
-                    <span className="font-semibold text-purple-900">Farcaster Wallet Ready</span>
-                  </div>
-                  <p className="text-sm text-purple-800">
-                    Using Farcaster's built-in wallet. Click connect to access your Base wallet seamlessly.
-                  </p>
-                </div>
-              )}
-
               <button
                 onClick={handleConnect}
                 disabled={isConnecting}
@@ -680,7 +610,7 @@ function BlockitApp() {
                 ) : (
                   <>
                     <Shield className="w-5 h-5" />
-                    <span>{isFarcasterApp ? 'Connect Farcaster Wallet' : 'Connect & Discover Tokens'}</span>
+                    <span>Connect Wallet</span>
                   </>
                 )}
               </button>
@@ -694,12 +624,11 @@ function BlockitApp() {
                   <div className="mt-2 space-y-1 text-xs text-gray-600">
                     <div><strong>Environment:</strong> {isFarcasterApp ? 'Farcaster' : 'Browser'}</div>
                     <div><strong>Platform:</strong> {isMobile ? 'Mobile' : 'Desktop'}</div>
-                    <div><strong>Farcaster SDK:</strong> {typeof sdk !== 'undefined' ? '✅ Available' : '❌ Not found'}</div>
-                    <div><strong>Window.ethereum:</strong> {typeof window !== 'undefined' && (window as any).ethereum ? '✅ Available' : '❌ Not found'}</div>
-                    <div><strong>MetaMask:</strong> {typeof window !== 'undefined' && (window as any).ethereum?.isMetaMask ? '✅ Detected' : '❌ Not detected'}</div>
-                    <div><strong>Coinbase:</strong> {typeof window !== 'undefined' && (window as any).ethereum?.isCoinbaseWallet ? '✅ Detected' : '❌ Not detected'}</div>
+                    <div><strong>SDK Ready:</strong> {sdkReady ? '✅ Yes' : '❌ No'}</div>
                     <div><strong>Connectors:</strong> {connectors.length} available</div>
                     <div><strong>Connector Names:</strong> {connectors.map(c => c.name).join(', ') || 'None'}</div>
+                    <div><strong>Is Connected:</strong> {isConnected ? '✅ Yes' : '❌ No'}</div>
+                    <div><strong>Address:</strong> {address?.slice(0, 10) || 'Not connected'}</div>
                     {connectError && <div><strong>Last Error:</strong> {connectError.message}</div>}
                   </div>
                 </details>
@@ -710,7 +639,7 @@ function BlockitApp() {
                   <p className="text-red-700 text-sm">{error}</p>
                   
                   {/* Wallet Installation Guide */}
-                  {error.includes('No wallet') && !isFarcasterApp && (
+                  {error.includes('No wallet') && (
                     <div className="mt-3 pt-3 border-t border-red-200">
                       <p className="text-red-800 font-medium text-sm mb-2">Install a wallet to continue:</p>
                       <div className="space-y-2">
@@ -740,15 +669,6 @@ function BlockitApp() {
                           </p>
                         )}
                       </div>
-                    </div>
-                  )}
-
-                  {/* Farcaster-specific error message */}
-                  {error.includes('Farcaster wallet') && isFarcasterApp && (
-                    <div className="mt-3 pt-3 border-t border-red-200">
-                      <p className="text-red-800 font-medium text-sm">
-                        💡 Try refreshing the mini app or check if your Farcaster wallet is set up for Base network.
-                      </p>
                     </div>
                   )}
                 </div>
