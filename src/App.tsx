@@ -94,8 +94,9 @@ interface TokenApproval {
 
 // ENHANCED BaseScan API service for comprehensive token discovery
 class BaseTokenDiscoveryService {
-  private apiKey: string = 'CV4WNTY3QMPMABJVXJYVCK3ZZ419XT9Z9M'; // Default API key
+  private apiKey: string = 'CV4WNTY3QMPMABJVXJYVCK3ZZ419XT9Z9M'; 
   private baseUrl: string = 'https://api.etherscan.io/v2/api?chainid=8453';
+  private alchemyUrl: string = 'https://base-mainnet.g.alchemy.com/v2/8z1xwjFnWSKEAenTEKZIn'; 
 
   async discoverUserTokens(address: string): Promise<DiscoveredToken[]> {
     try {
@@ -164,8 +165,55 @@ class BaseTokenDiscoveryService {
     }
   }
 
+  async getTokenBalancesAlchemy(address: string): Promise<any> {
+    try {
+      const response = await fetch(this.alchemyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: 1,
+          jsonrpc: '2.0',
+          method: 'alchemy_getTokenBalances',
+          params: [address]
+        })
+      });
+      
+      const data = await response.json();
+      return data.result;
+    } catch (error) {
+      console.error('Alchemy token balance fetch failed:', error);
+      return null;
+    }
+  }
+
   async getTokenBalance(tokenAddress: string, userAddress: string): Promise<string> {
     try {
+      // Try Alchemy first
+      const alchemyResponse = await fetch(this.alchemyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: 1,
+          jsonrpc: '2.0',
+          method: 'alchemy_getTokenBalances',
+          params: [userAddress, [tokenAddress]]
+        })
+      });
+      
+      const alchemyData = await alchemyResponse.json();
+      if (alchemyData.result && alchemyData.result.tokenBalances && alchemyData.result.tokenBalances[0]) {
+        return alchemyData.result.tokenBalances[0].tokenBalance || '0';
+      }
+    } catch (error) {
+      console.warn(`Alchemy balance check failed for ${tokenAddress}, trying Etherscan:`, error);
+    }
+
+    try {
+      // Fallback to Etherscan
       const response = await fetch(
         `${this.baseUrl}&module=account&action=tokenbalance&contractaddress=${tokenAddress}&address=${userAddress}&tag=latest&apikey=${this.apiKey}`
       );
