@@ -1,4 +1,5 @@
 
+
 export interface BaseTokenConfig {
   address: `0x${string}`;
   symbol: string;
@@ -200,8 +201,8 @@ export const BASE_ECOSYSTEM_TOKENS: BaseTokenConfig[] = [
   },
 ];
 
-// COMPREHENSIVE BASE NETWORK PROTOCOLS
-export const BASE_ECOSYSTEM_PROTOCOLS: BaseProtocolConfig[] = {
+// COMPREHENSIVE BASE NETWORK PROTOCOLS - FIXED SYNTAX
+export const BASE_ECOSYSTEM_PROTOCOLS: BaseProtocolConfig[] = [
   // Major Base Native DEXs
   {
     address: '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43',
