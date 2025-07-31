@@ -14,6 +14,7 @@
     "webhookUrl": "https://blockit-two.vercel.app/api/webhook"
   },
   "miniapp": {
+    "version": "1",
     "name": "Blockit Pro - Personal Token Security",
     "description": "Automatically discover tokens in your wallet and scan only those for risky approvals. More efficient, more personal, more secure.",
     "icon": "https://blockit-two.vercel.app/assets/blockit-icon.png",
