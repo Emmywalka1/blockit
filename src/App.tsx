@@ -17,7 +17,6 @@ try {
 
 // Main Blockit Application Component
 function BlockitApp(): React.JSX.Element {
-  const [sdkReady, setSdkReady] = useState(false);
   const [farcasterContext, setFarcasterContext] = useState<any>(null);
   const [debugMode, setDebugMode] = useState(false);
 
@@ -50,50 +49,38 @@ function BlockitApp(): React.JSX.Element {
     configSummary
   } = useBaseTokenDiscovery();
 
-  // Initialize Farcaster SDK - SIMPLIFIED VERSION
+  // Call ready() when React app is fully loaded - following official Farcaster pattern
   useEffect(() => {
-    const initApp = async () => {
-      console.log('🚀 Initializing Blockit...');
-      
+    const callReady = async () => {
       try {
-        // Try to call SDK ready if available
         if (sdk && sdk.actions && typeof sdk.actions.ready === 'function') {
-          console.log('📱 Calling sdk.actions.ready()...');
-          await sdk.actions.ready({ disableNativeGestures: false });
-          console.log('✅ sdk.actions.ready() succeeded');
+          console.log('📱 App fully loaded, calling sdk.actions.ready()...');
+          // This is the critical call that hides the splash screen
+          await sdk.actions.ready({
+            disableNativeGestures: false
+          });
+          console.log('✅ sdk.actions.ready() successful - splash screen should be hidden');
           
-          // Try to get context
+          // Try to get context after ready
           try {
             const context = await sdk.context;
             setFarcasterContext(context);
-            console.log('📱 Context retrieved:', context);
-          } catch (e) {
-            console.log('ℹ️ No context available');
+            console.log('📱 Farcaster context:', context);
+          } catch (contextError) {
+            console.log('ℹ️ No Farcaster context available');
           }
         } else {
-          console.log('⚠️ SDK not available');
+          console.log('ℹ️ Farcaster SDK not available - running in standalone mode');
         }
       } catch (error: any) {
-        console.warn('❌ SDK error:', error.message);
+        console.error('❌ sdk.actions.ready() failed:', error);
+        // Even if ready() fails, the app should still work
       }
-      
-      // Always show app after brief delay
-      setTimeout(() => {
-        setSdkReady(true);
-        console.log('✅ App ready');
-      }, 300);
     };
-    
-    initApp();
-    
-    // Emergency timeout
-    const timeout = setTimeout(() => {
-      setSdkReady(true);
-      console.log('⏰ Emergency timeout - showing app');
-    }, 1000);
-    
-    return () => clearTimeout(timeout);
-  }, []);
+
+    // Call ready immediately when component mounts (app is ready to display)
+    callReady();
+  }, []); // Empty dependency array - run once when component mounts
 
   const handleConnect = async () => {
     try {
@@ -145,27 +132,6 @@ function BlockitApp(): React.JSX.Element {
     const low = getApprovalsByRisk('low').length;
     return { high, medium, low, total: high + medium + low };
   }, [tokenApprovals, getApprovalsByRisk]);
-
-  // Show loading state during initialization
-  if (!sdkReady) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
-        <div className="text-center max-w-sm mx-auto px-4">
-          <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Shield className="w-8 h-8 text-white" />
-          </div>
-          <Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
-          <p className="text-gray-600 font-medium">Initializing Blockit...</p>
-          <p className="text-sm text-gray-500 mb-2">Token Approval Security for Base</p>
-          <p className="text-xs text-gray-400">Loading...</p>
-          
-          <div className="mt-3 w-full bg-gray-200 rounded-full h-1">
-            <div className="bg-blue-600 h-1 rounded-full animate-pulse" style={{width: '60%'}}></div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
