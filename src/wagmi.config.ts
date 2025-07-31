@@ -1,18 +1,18 @@
 import { http, createConfig } from 'wagmi'
 import { base } from 'wagmi/chains'
-import { injected } from 'wagmi/connectors'
+import { farcasterMiniApp } from '@farcaster/miniapp-wagmi-connector'
 
 export const config = createConfig({
   chains: [base],
-  connectors: [
-    injected()
-  ],
   transports: {
-    [base.id]: http('https://mainnet.base.org'),
+    [base.id]: http(),
   },
+  connectors: [
+    farcasterMiniApp()
+  ]
 })
 
-console.log('🔧 Wagmi configured for Base network');
+console.log('🔧 Wagmi configured with Farcaster miniapp connector');
 
 console.log('🔧 Wagmi configured for Base network with smart wallet detection');
 
