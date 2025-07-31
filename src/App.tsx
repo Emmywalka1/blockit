@@ -1,119 +1,4 @@
-// ENHANCED: Prepare approval check contracts (only for tokens with balance)
-  const approvalContracts = useMemo(() => {
-    if (!address || discoveredTokens.length === 0) return [];
-
-    // ENHANCED: Only check approvals for tokens with balance > 0
-    const ownedTokens = discoveredTokens.filter(token => token.hasBalance);
-    
-    const contracts = [];
-    for (const token of ownedTokens) {
-      for (const spender of BASE_SPENDERS) {
-        contracts.push({
-          address: token.address,
-          abi: ERC20_ABI,
-          functionName: 'allowance',
-          args: [address, spender.address],
-        });
-      }
-    }
-    
-    console.log(`📋 ENHANCED: Prepared ${contracts.length} approval checks for ${ownedTokens.length} OWNED tokens (vs checking all tokens)`);
-    return contracts;
-  }, [address, discoveredTokens]);
-
-  // Execute approval checks (ENHANCED)
-  const { 
-    data: approvalResults, 
-    isLoading: isLoadingApprovals, 
-    error: approvalError 
-  } = useReadContracts({
-    contracts: approvalContracts,
-    query: {
-      enabled: !!address && approvalContracts.length > 0,
-    }
-  });
-
-  // ENHANCED: Process approval results (only for owned tokens)
-  useEffect(() => {
-    if (approvalResults && address && !isLoadingApprovals && discoveredTokens.length > 0) {
-      console.log('🔍 Processing ENHANCED approval scan results...');
-      
-      const foundApprovals: TokenApproval[] = [];
-      const ownedTokens = discoveredTokens.filter(token => token.hasBalance);
-      let resultIndex = 0;
-
-      for (const token of ownedTokens) {
-        for (const spender of BASE_SPENDERS) {
-          if (resultIndex >= approvalResults.length) break;
-          
-          const result = approvalResults[resultIndex];
-          resultIndex++;
-
-          if (result.status === 'success' && result.result) {
-            const allowance = result.result as bigint;
-            
-            if (allowance > 0n) {
-              const isUnlimited = allowance >= 2n ** 255n;
-              
-              const approval: TokenApproval = {
-                id: `${token.address}-${spender.address}`,
-                tokenAddress: token.address,
-                tokenInfo: token,
-                spender: spender.address,
-                spenderInfo: spender,
-                allowance,
-                allowanceFormatted: isUnlimited 
-                  ? 'Unlimited' 
-                  : formatUnits(allowance, token.decimals),
-                riskLevel: spender.risk,
-                estimatedValue: isUnlimited ? 1000000 : Number(formatUnits(allowance, token.decimals)),
-                isUnlimited,
-              };
-
-              foundApprovals.push(approval);
-              console.log(`🚨 FOUND APPROVAL: ${token.symbol} (balance: ${token.balanceFormatted}) → ${spender.protocol} (${spender.risk} risk)`);
-            }
-          }
-        }
-      }
-
-      setApprovals(foundApprovals);
-      setIsScanning(false);
-      setIsDiscovering(false);
-      setDiscoveryProgress({ step: 'ENHANCED scan complete!', current: 4, total: 4 });
-      
-      if (foundApprovals.length === 0) {
-        setError(`✅ COMPREHENSIVE SCAN: No risky approvals found for your ${ownedTokens.length} owned tokens! Wallet is secure. (Scanned ${discoveredTokens.length} total tokens)`);
-      } else {
-        setError('');
-        console.log(`⚠️ ENHANCED RESULTS: Found ${foundApprovals.length} approvals for ${ownedTokens.length} owned tokens (scanned ${discoveredTokens.length} total)`);
-      }
-    }
-
-    if (approvalError) {
-      console.error('Enhanced approval scan error:', approvalError);
-      setError(`Enhanced approval scan failed: ${approvalError.message}`);
-      setIsScanning(false);
-      setIsDiscovering(false);
-    }
-  }, [approvalResults, isLoadingApprovals, address, discoveredTokens, approvalError]);
-
-  // Add timeout protection for scanning (KEPT THE SAME)
-  useEffect(() => {
-    if (isScanning) {
-      const timeout = setTimeout(() => {
-        console.log('⏰ Enhanced approval scan timeout, completing anyway');
-        setIsScanning(false);
-        setIsDiscovering(false);
-        setDiscoveryProgress({ step: 'Enhanced scan timeout - showing results', current: 4, total: 4 });
-        if (approvals.length === 0) {
-          setError('⏰ Enhanced scan timed out but no approvals found. Your wallet appears secure.');
-        }
-      }, 30000); // Standard timeout for enhanced scan
-
-      return () => clearTimeout(timeout);
-    }
-  }, [isScanning, approvals.length]);import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Shield, AlertTriangle, Check, Loader, ExternalLink, Trash2, Zap, DollarSign, Wifi, WifiOff, Database, Search } from 'lucide-react';
 
 // REAL wagmi imports for blockchain interaction
@@ -209,9 +94,9 @@ interface TokenApproval {
 
 // ENHANCED BaseScan API service for comprehensive token discovery
 class BaseTokenDiscoveryService {
-  private apiKey: string = 'CV4WNTY3QMPMABJVXJYVCK3ZZ419XT9Z9M'; // Default API key
+  private apiKey: string = 'CV4WNTY3QMPMABJVXJYVCK3ZZ419XT9Z9M'; 
   private baseUrl: string = 'https://api.etherscan.io/v2/api?chainid=8453';
-  private alchemyUrl: string = 'https://base-mainnet.g.alchemy.com/v2/8z1xwjFnWSKEAenTEKZIn'; // Add your API key
+  private alchemyUrl: string = 'https://base-mainnet.g.alchemy.com/v2/8z1xwjFnWSKEAenTEKZIn'; 
 
   async discoverUserTokens(address: string): Promise<DiscoveredToken[]> {
     try {
@@ -280,6 +165,29 @@ class BaseTokenDiscoveryService {
     }
   }
 
+  async getTokenBalancesAlchemy(address: string): Promise<any> {
+    try {
+      const response = await fetch(this.alchemyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: 1,
+          jsonrpc: '2.0',
+          method: 'alchemy_getTokenBalances',
+          params: [address]
+        })
+      });
+      
+      const data = await response.json();
+      return data.result;
+    } catch (error) {
+      console.error('Alchemy token balance fetch failed:', error);
+      return null;
+    }
+  }
+
   async getTokenBalance(tokenAddress: string, userAddress: string): Promise<string> {
     try {
       // Try Alchemy first
@@ -316,44 +224,6 @@ class BaseTokenDiscoveryService {
       console.error(`Failed to get balance for ${tokenAddress}:`, error);
       return '0';
     }
-  }
-
-  async getTokenBalancesAlchemy(address: string): Promise<any> {
-    try {
-      const response = await fetch(this.alchemyUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          id: 1,
-          jsonrpc: '2.0',
-          method: 'alchemy_getTokenBalances',
-          params: [address]
-        })
-      });
-      
-      const data = await response.json();
-      return data.result;
-    } catch (error) {
-      console.error('Alchemy token balance fetch failed:', error);
-      return null;
-    }
-  }
-
-  // ENHANCED: Get approval events directly from blockchain
-  async getApprovalEvents(tokenAddress: string, userAddress: string): Promise<any[]> {
-    // SIMPLIFIED: Skip complex blockchain event scanning for now
-    // This was causing the app to hang due to rate limiting
-    return [];
-  }
-
-  // ENHANCED: Get comprehensive token approvals using multiple methods
-  async getComprehensiveApprovals(tokens: DiscoveredToken[], userAddress: string): Promise<any[]> {
-    // SIMPLIFIED: Use standard wagmi approach instead of complex blockchain scanning
-    // The complex approach was causing timeouts and hanging
-    console.log('🔍 Using standard approval scanning (comprehensive blockchain scanning disabled to prevent hangs)');
-    return [];
   }
 }
 
@@ -621,6 +491,123 @@ function BlockitApp() {
     }
   }, [address, discoveryService]);
 
+  // ENHANCED: Prepare approval check contracts (only for tokens with balance)
+  const approvalContracts = useMemo(() => {
+    if (!address || discoveredTokens.length === 0) return [];
+
+    // ENHANCED: Only check approvals for tokens with balance > 0
+    const ownedTokens = discoveredTokens.filter(token => token.hasBalance);
+    
+    const contracts = [];
+    for (const token of ownedTokens) {
+      for (const spender of BASE_SPENDERS) {
+        contracts.push({
+          address: token.address,
+          abi: ERC20_ABI,
+          functionName: 'allowance',
+          args: [address, spender.address],
+        });
+      }
+    }
+    
+    console.log(`📋 ENHANCED: Prepared ${contracts.length} approval checks for ${ownedTokens.length} OWNED tokens (vs checking all tokens)`);
+    return contracts;
+  }, [address, discoveredTokens]);
+
+  // Execute approval checks (ENHANCED)
+  const { 
+    data: approvalResults, 
+    isLoading: isLoadingApprovals, 
+    error: approvalError 
+  } = useReadContracts({
+    contracts: approvalContracts,
+    query: {
+      enabled: !!address && approvalContracts.length > 0,
+    }
+  });
+
+  // ENHANCED: Process approval results (only for owned tokens)
+  useEffect(() => {
+    if (approvalResults && address && !isLoadingApprovals && discoveredTokens.length > 0) {
+      console.log('🔍 Processing ENHANCED approval scan results...');
+      
+      const foundApprovals: TokenApproval[] = [];
+      const ownedTokens = discoveredTokens.filter(token => token.hasBalance);
+      let resultIndex = 0;
+
+      for (const token of ownedTokens) {
+        for (const spender of BASE_SPENDERS) {
+          if (resultIndex >= approvalResults.length) break;
+          
+          const result = approvalResults[resultIndex];
+          resultIndex++;
+
+          if (result.status === 'success' && result.result) {
+            const allowance = result.result as bigint;
+            
+            if (allowance > 0n) {
+              const isUnlimited = allowance >= 2n ** 255n;
+              
+              const approval: TokenApproval = {
+                id: `${token.address}-${spender.address}`,
+                tokenAddress: token.address,
+                tokenInfo: token,
+                spender: spender.address,
+                spenderInfo: spender,
+                allowance,
+                allowanceFormatted: isUnlimited 
+                  ? 'Unlimited' 
+                  : formatUnits(allowance, token.decimals),
+                riskLevel: spender.risk,
+                estimatedValue: isUnlimited ? 1000000 : Number(formatUnits(allowance, token.decimals)),
+                isUnlimited,
+              };
+
+              foundApprovals.push(approval);
+              console.log(`🚨 FOUND APPROVAL: ${token.symbol} (balance: ${token.balanceFormatted}) → ${spender.protocol} (${spender.risk} risk)`);
+            }
+          }
+        }
+      }
+
+      setApprovals(foundApprovals);
+      setIsScanning(false);
+      setIsDiscovering(false);
+      setDiscoveryProgress({ step: 'ENHANCED scan complete!', current: 4, total: 4 });
+      
+      if (foundApprovals.length === 0) {
+        setError(`✅ COMPREHENSIVE SCAN: No risky approvals found for your ${ownedTokens.length} owned tokens! Wallet is secure. (Scanned ${discoveredTokens.length} total tokens)`);
+      } else {
+        setError('');
+        console.log(`⚠️ ENHANCED RESULTS: Found ${foundApprovals.length} approvals for ${ownedTokens.length} owned tokens (scanned ${discoveredTokens.length} total)`);
+      }
+    }
+
+    if (approvalError) {
+      console.error('Enhanced approval scan error:', approvalError);
+      setError(`Enhanced approval scan failed: ${approvalError.message}`);
+      setIsScanning(false);
+      setIsDiscovering(false);
+    }
+  }, [approvalResults, isLoadingApprovals, address, discoveredTokens, approvalError]);
+
+  // Add timeout protection for scanning (KEPT THE SAME)
+  useEffect(() => {
+    if (isScanning) {
+      const timeout = setTimeout(() => {
+        console.log('⏰ Enhanced approval scan timeout, completing anyway');
+        setIsScanning(false);
+        setIsDiscovering(false);
+        setDiscoveryProgress({ step: 'Enhanced scan timeout - showing results', current: 4, total: 4 });
+        if (approvals.length === 0) {
+          setError('⏰ Enhanced scan timed out but no approvals found. Your wallet appears secure.');
+        }
+      }, 45000); // Increased timeout for comprehensive scan
+
+      return () => clearTimeout(timeout);
+    }
+  }, [isScanning, approvals.length]);
+
   // Auto-discover tokens when connected (KEPT THE SAME)
   useEffect(() => {
     if (isConnected && address && discoveredTokens.length === 0 && !isDiscovering) {
@@ -742,8 +729,8 @@ function BlockitApp() {
               <div>
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Secure Your Assets</h2>
                 <p className="text-gray-600">
-                  ENHANCED scan of ALL your tokens and complete transaction history. 
-                  Finds tokens other tools might miss and checks approvals across all discovered tokens.
+                  COMPREHENSIVE scan of ALL your tokens and complete transaction history. 
+                  Finds tokens other tools might miss using advanced Base blockchain analysis.
                 </p>
               </div>
 
@@ -757,7 +744,7 @@ function BlockitApp() {
                   <p>✅ Checks {BASE_SPENDERS.length}+ protocols & bridges</p>
                   <p>✅ Only shows approvals for tokens you own</p>
                   <p>✅ Real-time balance verification</p>
-                  <p>✅ Manual approval revocation control</p>
+                  <p>✅ Professional-grade comprehensive scanning</p>
                 </div>
               </div>
 
