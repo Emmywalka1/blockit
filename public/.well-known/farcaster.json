@@ -4,28 +4,72 @@
     "payload": "eyJkb21haW4iOiJibG9ja2l0LXR3by52ZXJjZWwuYXBwIn0", 
     "signature": "MHg2MzAyYjk1ZmQ2ZDk5NjAxNTRkOGRkZTQwODk0MzA0MzM5MDQ5YzYwMGQ4NTJiNzZiZjE0N2FhYTE5MjllOWYyMDAxZWM1MjJhMTg4YTkwYzhlY2VkOWI2NGI1OTU5NzkxNjFlOWQ1MWU2NTRhY2U3Y2YzYTJmMDJjMjEzMjkzODFi"
   },
-  "miniapp": {
-    "version": "1",
+  "frame": {
     "name": "Blockit",
-    "iconUrl": "https://blockit-two.vercel.app/blockit-icon.png",
+    "iconUrl": "https://blockit-two.vercel.app/assets/blockit-icon.png",
     "homeUrl": "https://blockit-two.vercel.app",
-    "imageUrl": "https://blockit-two.vercel.app/og-image.png",
-    "buttonTitle": "🛡️ Scan Approvals",
-    "splashImageUrl": "https://blockit-two.vercel.app/blockit-splash.png",
+    "imageUrl": "https://blockit-two.vercel.app/assets/og-image.png",
+    "splashImageUrl": "https://blockit-two.vercel.app/assets/blockit-splash.png",
     "splashBackgroundColor": "#ef4444",
-    "description": "Scan and revoke risky token approvals on Base network to keep your funds safe from malicious contracts.",
-    "screenshotUrls": [
+    "webhookUrl": "https://blockit-two.vercel.app/api/webhook"
+  },
+  "miniapp": {
+    "name": "Blockit Pro - Personal Token Security",
+    "description": "Automatically discover tokens in your wallet and scan only those for risky approvals. More efficient, more personal, more secure.",
+    "icon": "https://blockit-two.vercel.app/assets/blockit-icon.png",
+    "category": "DeFi",
+    "tags": ["security", "defi", "approvals", "tokens", "base"],
+    "screenshots": [
       "https://blockit-two.vercel.app/screenshot1.png",
       "https://blockit-two.vercel.app/screenshot2.png", 
       "https://blockit-two.vercel.app/screenshot3.png"
     ],
-    "primaryCategory": "finance",
-    "tags": [
-      "security",
-      "defi", 
-      "base",
-      "revoke",
-      "approvals"
-    ]
+    "developer": {
+      "name": "emmywalka",
+      "url": "https://blockit-two.vercel.app",
+      "contact": "tobinfrost03@gmail.com"
+    },
+    "permissions": [
+      "wallet",
+      "address",
+      "transactions"
+    ],
+    "networks": ["base"],
+    "version": "2.0.0",
+    "features": [
+      {
+        "name": "Personal Token Discovery",
+        "description": "Automatically identifies tokens you actually own instead of scanning a predefined list"
+      },
+      {
+        "name": "Targeted Approval Scanning", 
+        "description": "Only scans approvals for tokens with balances - faster and more relevant"
+      },
+      {
+        "name": "Real-time Balance Checking",
+        "description": "Live blockchain queries to show current token balances"
+      },
+      {
+        "name": "One-Click Revoke",
+        "description": "Revoke risky approvals with ~$0.01 gas cost on Base network"
+      },
+      {
+        "name": "Risk Assessment",
+        "description": "Categorizes protocols by risk level and provides safety recommendations"
+      }
+    ],
+    "changelog": {
+      "2.0.0": [
+        "Added personal token discovery system",
+        "Improved efficiency by scanning only owned tokens", 
+        "Enhanced UI with token balance display",
+        "Added real-time discovery progress tracking",
+        "Optimized for Base network gas costs"
+      ],
+      "1.0.0": [
+        "Initial release with predefined token scanning",
+        "Basic approval detection and revoke functionality"
+      ]
+    }
   }
 }
