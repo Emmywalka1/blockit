@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Shield, Loader, AlertTriangle, Wallet, Network, Settings, BarChart3 } from 'lucide-react';
 
 // REAL wagmi imports for blockchain interaction
-import { useAccount, useConnect, useDisconnect, useConnectors } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useConnectors, useSwitchChain } from 'wagmi';
+import { base } from 'wagmi/chains';
 
 // Import our comprehensive scanning components
 import { useBaseTokenDiscovery } from './hooks/useBaseTokenDiscovery';
@@ -12,13 +13,15 @@ import { sdk } from '@farcaster/miniapp-sdk';
 
 // Main Blockit Application Component
 function BlockitApp(): React.JSX.Element {
-  const [farcasterContext, setFarcasterContext] = useState<any>(null);
+  const [isSDKReady, setIsSDKReady] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   // Wagmi hooks for wallet connection
-  const { address, isConnected, chain } = useAccount();
-  const { connect, isPending: isConnecting } = useConnect();
+  const { address, isConnected, chain, connector } = useAccount();
+  const { connect, isPending: isConnecting, error: connectError } = useConnect();
   const { disconnect } = useDisconnect();
+  const { switchChain } = useSwitchChain();
   const connectors = useConnectors();
 
   // Use our comprehensive Base token discovery and approval scanner
@@ -44,10 +47,37 @@ function BlockitApp(): React.JSX.Element {
     configSummary
   } = useBaseTokenDiscovery();
 
-  // Initialize Farcaster SDK - EXACTLY as documented
+  // Initialize Farcaster SDK properly
   useEffect(() => {
-    // After your app is fully loaded and ready to display
-    sdk.actions.ready();
+    const initializeSDK = async () => {
+      try {
+        console.log('🚀 Initializing Farcaster SDK...');
+        
+        // Check if we're in Farcaster environment
+        const userAgent = navigator.userAgent;
+        const isFarcaster = userAgent.includes('Farcaster') || userAgent.includes('farcaster');
+        
+        if (isFarcaster) {
+          console.log('📱 Detected Farcaster environment');
+          
+          // Initialize SDK with proper settings
+          await sdk.actions.ready({
+            disableNativeGestures: false
+          });
+          
+          console.log('✅ Farcaster SDK initialized successfully');
+          setIsSDKReady(true);
+        } else {
+          console.log('🌐 Non-Farcaster environment detected');
+          setIsSDKReady(true); // Still set ready for non-Farcaster environments
+        }
+      } catch (error) {
+        console.warn('⚠️ SDK initialization failed:', error);
+        setIsSDKReady(true); // Continue anyway
+      }
+    };
+
+    initializeSDK();
   }, []);
 
   // Monitor connection state changes
@@ -56,60 +86,90 @@ function BlockitApp(): React.JSX.Element {
       console.log('✅ Wallet connected successfully!');
       console.log('Address:', address);
       console.log('Chain:', chain?.name, chain?.id);
+      console.log('Connector:', connector?.name);
+      
+      // Check if we're on Base network
+      if (chain?.id !== base.id) {
+        console.log('⚠️ Not on Base network, attempting to switch...');
+        switchChain?.({ chainId: base.id });
+      }
+      
+      setConnectionError(null);
     } else if (!isConnected) {
       console.log('❌ Wallet not connected');
     }
-  }, [isConnected, address, chain]);
+  }, [isConnected, address, chain, connector, switchChain]);
+
+  // Handle connection errors
+  useEffect(() => {
+    if (connectError) {
+      console.error('❌ Connection error:', connectError);
+      setConnectionError(connectError.message);
+    }
+  }, [connectError]);
 
   const handleConnect = async () => {
     try {
       console.log('🔗 Starting wallet connection...');
-      console.log('Available connectors:', connectors.map(c => c.name));
+      setConnectionError(null);
+      
+      // Log available connectors
+      console.log('Available connectors:', connectors.map(c => ({ name: c.name, id: c.id, type: c.type })));
       
       if (connectors.length === 0) {
-        throw new Error('No wallet connectors available');
+        throw new Error('No wallet connectors available. Please install a wallet like MetaMask.');
       }
 
-      // Try to connect with the first available connector
-      // If we're in Farcaster, this should be the Farcaster miniapp connector
-      const connector = connectors[0];
-      console.log(`🔌 Attempting connection with: ${connector.name}`);
+      // Priority order: Farcaster connector first, then others
+      let targetConnector = connectors.find(c => 
+        c.name?.toLowerCase().includes('farcaster') || 
+        c.id?.toLowerCase().includes('farcaster')
+      );
       
-      await connect({ connector });
+      // If no Farcaster connector, use the first available
+      if (!targetConnector) {
+        targetConnector = connectors[0];
+      }
+      
+      console.log(`🔌 Attempting connection with: ${targetConnector.name} (${targetConnector.type})`);
+      
+      await connect({ connector: targetConnector });
       console.log('✅ Wallet connection initiated');
       
     } catch (err: any) {
       console.error('❌ Wallet connection failed:', err);
       
-      // Show detailed error information
-      const errorDetails = {
-        message: err.message,
-        connectors: connectors.length,
-        connectorNames: connectors.map(c => c.name),
-        userAgent: navigator.userAgent.includes('Farcaster') ? 'Farcaster' : 'Other',
-        ethereum: typeof window !== 'undefined' && window.ethereum ? 'Available' : 'Not Available'
-      };
+      const errorMessage = err.message || 'Unknown error occurred';
+      setConnectionError(errorMessage);
       
-      console.log('Connection error details:', errorDetails);
-      
-      const errorMessage = `Connection failed: ${err.message}\n\n` +
-                          `Environment: ${errorDetails.userAgent}\n` +
-                          `Available connectors: ${errorDetails.connectors}\n` +
-                          `Ethereum provider: ${errorDetails.ethereum}\n\n` +
-                          `Try refreshing the page or check wallet permissions.`;
+      // Show user-friendly error message
+      const userMessage = `Connection failed: ${errorMessage}\n\n` +
+                         `Environment: ${navigator.userAgent.includes('Farcaster') ? 'Farcaster' : 'Web Browser'}\n` +
+                         `Available connectors: ${connectors.length}\n\n` +
+                         `Please try:\n` +
+                         `1. Refreshing the page\n` +
+                         `2. Checking wallet permissions\n` +
+                         `3. Ensuring your wallet supports Base network`;
                           
-      alert(errorMessage);
+      alert(userMessage);
     }
   };
 
   const handleDisconnect = () => {
     console.log('🔌 Disconnecting wallet...');
+    setConnectionError(null);
     disconnect();
   };
 
   const handleManualScan = () => {
     if (!address) {
       alert('Please connect your wallet first');
+      return;
+    }
+    
+    if (chain?.id !== base.id) {
+      alert('Please switch to Base network first');
+      switchChain?.({ chainId: base.id });
       return;
     }
     
@@ -124,6 +184,18 @@ function BlockitApp(): React.JSX.Element {
     const low = getApprovalsByRisk('low').length;
     return { high, medium, low, total: high + medium + low };
   }, [tokenApprovals, getApprovalsByRisk]);
+
+  // Show loading while SDK initializes
+  if (!isSDKReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
+          <p className="text-gray-600">Initializing Blockit...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -162,6 +234,36 @@ function BlockitApp(): React.JSX.Element {
       </div>
 
       <div className="max-w-md mx-auto px-4 py-6">
+        {/* Connection Error */}
+        {connectionError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+            <p className="text-red-800 font-medium">Connection Error</p>
+            <p className="text-red-600 text-sm mt-1">{connectionError}</p>
+            <button
+              onClick={() => setConnectionError(null)}
+              className="text-red-600 text-sm underline mt-2"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* Network Warning */}
+        {isConnected && chain?.id !== base.id && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+            <p className="text-yellow-800 font-medium">Wrong Network</p>
+            <p className="text-yellow-600 text-sm mt-1">
+              Please switch to Base network ({base.name})
+            </p>
+            <button
+              onClick={() => switchChain?.({ chainId: base.id })}
+              className="bg-yellow-600 text-white px-3 py-1 rounded text-sm mt-2"
+            >
+              Switch to Base
+            </button>
+          </div>
+        )}
+
         {/* Connection Status */}
         <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200 mb-6">
           <div className="flex items-center justify-between mb-3">
@@ -179,7 +281,7 @@ function BlockitApp(): React.JSX.Element {
           
           {!isConnected ? (
             <div className="space-y-3">
-              <p className="text-sm text-gray-600">Connect your wallet to scan for token approvals</p>
+              <p className="text-sm text-gray-600">Connect your wallet to scan for token approvals on Base</p>
               <button
                 onClick={handleConnect}
                 disabled={isConnecting}
@@ -197,6 +299,9 @@ function BlockitApp(): React.JSX.Element {
                   </>
                 )}
               </button>
+              <p className="text-xs text-gray-500 text-center">
+                Supports Farcaster wallet, MetaMask, and other Web3 wallets
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -208,14 +313,18 @@ function BlockitApp(): React.JSX.Element {
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Network:</span>
-                <span className="font-medium">
-                  {chain?.name || 'Base'} ({chain?.id || 8453})
+                <span className={`font-medium ${chain?.id === base.id ? 'text-green-600' : 'text-red-600'}`}>
+                  {chain?.name || 'Unknown'} ({chain?.id || 'Unknown'})
                 </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Connector:</span>
+                <span className="font-medium">{connector?.name || 'Unknown'}</span>
               </div>
               <div className="flex space-x-2">
                 <button
                   onClick={handleManualScan}
-                  disabled={isDiscovering || isScanning}
+                  disabled={isDiscovering || isScanning || chain?.id !== base.id}
                   className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded-lg transition-colors"
                 >
                   {isDiscovering || isScanning ? 'Scanning...' : 'Scan Approvals'}
@@ -435,14 +544,17 @@ function BlockitApp(): React.JSX.Element {
           <div className="mt-8 bg-gray-50 rounded-lg p-4">
             <h4 className="font-semibold text-gray-800 mb-3">Debug Information</h4>
             <div className="space-y-2 text-xs text-gray-600">
-              <div>Farcaster Context: {farcasterContext ? 'Available' : 'None'}</div>
-              <div>Farcaster Wallet: {sdk && sdk.wallet ? 'Available' : 'Not Available'}</div>
+              <div>SDK Ready: {isSDKReady ? 'Yes' : 'No'}</div>
+              <div>User Agent: {navigator.userAgent.includes('Farcaster') ? 'Farcaster' : 'Other'}</div>
               <div>Wagmi Connectors: {connectors.length}</div>
               <div>Connector Names: {connectors.map(c => c.name).join(', ')}</div>
               <div>Connected: {isConnected ? 'Yes' : 'No'}</div>
               <div>Address: {address || 'None'}</div>
               <div>Chain: {chain?.name || 'None'} ({chain?.id || 'Unknown'})</div>
-              <div>Window.ethereum: {typeof window !== 'undefined' && window.ethereum ? 'Available' : 'Not Available'}</div>
+              <div>Correct Chain: {chain?.id === base.id ? 'Yes' : 'No'}</div>
+              <div>Current Connector: {connector?.name || 'None'}</div>
+              <div>Connection Error: {connectionError || 'None'}</div>
+              <div>Window.ethereum: {typeof window !== 'undefined' && (window as any).ethereum ? 'Available' : 'Not Available'}</div>
               <div>Discovery Tokens: {discoveredTokens.length}</div>
               <div>Config: {configSummary.totalTokens} tokens, {configSummary.totalProtocols} protocols</div>
             </div>
