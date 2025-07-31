@@ -2,79 +2,103 @@ import { http, createConfig } from 'wagmi'
 import { base } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors'
 
-// Try to import Farcaster connectors with better error handling
-let farcasterConnector: any = null;
-
-try {
-  // Dynamic import approach for better compatibility
-  if (typeof window !== 'undefined') {
-    // Check if we're in a Farcaster environment
-    const isFarcaster = window.parent !== window || 
-                       navigator.userAgent.includes('Farcaster') ||
-                       document.referrer.includes('farcaster') ||
-                       (window as any).ethereum?.isFarcaster;
-    
-    if (isFarcaster) {
-      console.log('🎯 Detected Farcaster environment');
-    }
-  }
-} catch (error) {
-  console.log('📱 Farcaster connector not available:', error);
-}
-
-// Create connectors with better fallback logic
-export const config = createConfig({
-  chains: [base],
-  connectors: [
-    // Injected connector with smart detection
+// Create multiple injected connectors for better wallet support
+const createInjectedConnectors = () => {
+  const connectors = [];
+  
+  // Primary injected connector - detects any available wallet
+  connectors.push(
     injected({
-      target() {
-        // Return available providers in order of preference
+      target: () => {
         if (typeof window === 'undefined') return undefined;
         
-        const providers = [];
-        
-        // Check for Farcaster wallet first
-        if ((window as any).ethereum?.isFarcaster) {
-          providers.push({
-            id: 'farcaster',
-            name: 'Farcaster Wallet',
-            provider: (window as any).ethereum,
-          });
-        }
-        
-        // Check for MetaMask
-        if ((window as any).ethereum?.isMetaMask) {
-          providers.push({
-            id: 'metamask', 
-            name: 'MetaMask',
-            provider: (window as any).ethereum,
-          });
-        }
-        
-        // Check for Coinbase Wallet
-        if ((window as any).ethereum?.isCoinbaseWallet) {
-          providers.push({
-            id: 'coinbase',
-            name: 'Coinbase Wallet', 
-            provider: (window as any).ethereum,
-          });
-        }
-        
-        // Fallback to generic injected
+        // Check for any ethereum provider
         if ((window as any).ethereum) {
-          providers.push({
+          console.log('🔗 Found ethereum provider');
+          return {
             id: 'injected',
             name: 'Wallet',
             provider: (window as any).ethereum,
-          });
+          };
         }
         
-        console.log(`🔗 Found ${providers.length} wallet providers`);
-        return providers[0]; // Return the first (highest priority) provider
+        console.log('❌ No ethereum provider found');
+        return undefined;
       },
-    }),
-  ],
+    })
+  );
+
+  // Specific MetaMask connector
+  connectors.push(
+    injected({
+      target: () => {
+        if (typeof window === 'undefined') return undefined;
+        
+        if ((window as any).ethereum?.isMetaMask) {
+          console.log('🦊 Found MetaMask');
+          return {
+            id: 'metamask',
+            name: 'MetaMask',
+            provider: (window as any).ethereum,
+          };
+        }
+        
+        return undefined;
+      },
+    })
+  );
+
+  // Farcaster wallet connector
+  connectors.push(
+    injected({
+      target: () => {
+        if (typeof window === 'undefined') return undefined;
+        
+        // Check if we're in Farcaster context
+        const isFarcaster = window.parent !== window || 
+                           navigator.userAgent.includes('Farcaster') ||
+                           document.referrer.includes('farcaster');
+        
+        if (isFarcaster && (window as any).ethereum) {
+          console.log('🎯 Found Farcaster wallet');
+          return {
+            id: 'farcaster',
+            name: 'Farcaster Wallet',
+            provider: (window as any).ethereum,
+          };
+        }
+        
+        return undefined;
+      },
+    })
+  );
+
+  // Coinbase Wallet connector
+  connectors.push(
+    injected({
+      target: () => {
+        if (typeof window === 'undefined') return undefined;
+        
+        if ((window as any).ethereum?.isCoinbaseWallet) {
+          console.log('🔵 Found Coinbase Wallet');
+          return {
+            id: 'coinbase',
+            name: 'Coinbase Wallet',
+            provider: (window as any).ethereum,
+          };
+        }
+        
+        return undefined;
+      },
+    })
+  );
+
+  return connectors;
+};
+
+export const config = createConfig({
+  chains: [base],
+  connectors: createInjectedConnectors(),
   transports: {
     [base.id]: http('https://mainnet.base.org'),
   },
