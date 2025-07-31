@@ -2,10 +2,30 @@ import { http, createConfig } from 'wagmi'
 import { base } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors'
 
-// Create connectors array with multiple options
+// Try to import Farcaster miniapp wagmi connector
+let farcasterMiniAppConnector: any = null;
+try {
+  const farcasterWagmi = require('@farcaster/miniapp-wagmi-connector');
+  farcasterMiniAppConnector = farcasterWagmi.farcasterMiniApp;
+  console.log('✅ Farcaster miniapp wagmi connector loaded');
+} catch (error) {
+  console.log('📱 Farcaster miniapp wagmi connector not available');
+}
+
+// Create connectors array
 const connectors = [];
 
-// Add injected connector for MetaMask, Coinbase Wallet, etc.
+// Add Farcaster miniapp connector if available (PRIORITY)
+if (farcasterMiniAppConnector) {
+  try {
+    connectors.push(farcasterMiniAppConnector());
+    console.log('✅ Added Farcaster miniapp connector');
+  } catch (error) {
+    console.warn('⚠️ Failed to add Farcaster miniapp connector:', error);
+  }
+}
+
+// Add injected connector as fallback
 connectors.push(
   injected({
     target: () => ({
@@ -16,20 +36,11 @@ connectors.push(
   })
 );
 
-// Add specific MetaMask connector
+// Add MetaMask specifically
 if (typeof window !== 'undefined' && window.ethereum?.isMetaMask) {
   connectors.push(
     injected({
       target: 'metaMask',
-    })
-  );
-}
-
-// Add Coinbase Wallet connector
-if (typeof window !== 'undefined' && window.ethereum?.isCoinbaseWallet) {
-  connectors.push(
-    injected({
-      target: 'coinbaseWallet',
     })
   );
 }
@@ -40,7 +51,6 @@ export const config = createConfig({
   transports: {
     [base.id]: http('https://mainnet.base.org'),
   },
-  // Enable multi-injected provider discovery
   multiInjectedProviderDiscovery: true,
 })
 
