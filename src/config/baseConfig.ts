@@ -1,5 +1,3 @@
-
-
 export interface BaseTokenConfig {
   address: `0x${string}`;
   symbol: string;
@@ -21,6 +19,10 @@ export interface BaseProtocolConfig {
   isBaseNative: boolean;
   tvl?: number; // in USD
 }
+
+// Type aliases for backwards compatibility
+export type TokenConfig = BaseTokenConfig;
+export type SpenderConfig = BaseProtocolConfig;
 
 // COMPREHENSIVE BASE NETWORK TOKENS
 export const BASE_ECOSYSTEM_TOKENS: BaseTokenConfig[] = [
@@ -201,7 +203,7 @@ export const BASE_ECOSYSTEM_TOKENS: BaseTokenConfig[] = [
   },
 ];
 
-// COMPREHENSIVE BASE NETWORK PROTOCOLS - FIXED SYNTAX
+// COMPREHENSIVE BASE NETWORK PROTOCOLS
 export const BASE_ECOSYSTEM_PROTOCOLS: BaseProtocolConfig[] = [
   // Major Base Native DEXs
   {
@@ -413,6 +415,10 @@ export const BASE_ECOSYSTEM_PROTOCOLS: BaseProtocolConfig[] = [
   }
 ];
 
+// BACKWARDS COMPATIBILITY EXPORTS - For useRealApprovalScanner
+export const BASE_TOKENS = BASE_ECOSYSTEM_TOKENS;
+export const BASE_SPENDERS = BASE_ECOSYSTEM_PROTOCOLS;
+
 // Helper functions
 export const getBaseTokenByAddress = (address: string): BaseTokenConfig | undefined => {
   return BASE_ECOSYSTEM_TOKENS.find(token => 
@@ -425,6 +431,10 @@ export const getBaseProtocolByAddress = (address: string): BaseProtocolConfig | 
     protocol.address.toLowerCase() === address.toLowerCase()
   );
 };
+
+// Legacy aliases for backwards compatibility
+export const getTokenByAddress = getBaseTokenByAddress;
+export const getSpenderByAddress = getBaseProtocolByAddress;
 
 export const getBaseNativeTokens = (): BaseTokenConfig[] => {
   return BASE_ECOSYSTEM_TOKENS.filter(token => token.isBaseNative);
@@ -475,5 +485,8 @@ export const BASE_CONFIG_SUMMARY = {
     high: BASE_ECOSYSTEM_PROTOCOLS.filter(p => p.risk === 'high').length,
   }
 };
+
+// Legacy alias
+export const CONFIG_SUMMARY = BASE_CONFIG_SUMMARY;
 
 console.log('Base Network Configuration Loaded:', BASE_CONFIG_SUMMARY);
