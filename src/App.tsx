@@ -50,65 +50,53 @@ function BlockitApp(): React.JSX.Element {
     sdk.actions.ready();
   }, []);
 
+  // Monitor connection state changes
+  useEffect(() => {
+    if (isConnected && address) {
+      console.log('✅ Wallet connected successfully!');
+      console.log('Address:', address);
+      console.log('Chain:', chain?.name, chain?.id);
+    } else if (!isConnected) {
+      console.log('❌ Wallet not connected');
+    }
+  }, [isConnected, address, chain]);
+
   const handleConnect = async () => {
     try {
-      console.log('🔗 Attempting wallet connection...');
+      console.log('🔗 Starting wallet connection...');
       console.log('Available connectors:', connectors.map(c => c.name));
       
-      // Method 1: Try Farcaster wallet first if available
-      if (sdk && sdk.wallet) {
-        try {
-          console.log('🎯 Trying Farcaster wallet connection...');
-          const permissions = await sdk.wallet.requestPermissions();
-          console.log('✅ Farcaster wallet permissions granted:', permissions);
-          
-          // Check if we're connected after Farcaster wallet
-          setTimeout(() => {
-            if (isConnected) {
-              console.log('✅ Farcaster wallet connected successfully');
-            }
-          }, 1000);
-          
-          return; // Exit early if Farcaster wallet worked
-        } catch (farcasterError: any) {
-          console.warn('⚠️ Farcaster wallet failed:', farcasterError.message);
-          // Continue to try other connectors
-        }
-      }
-
-      // Method 2: Try wagmi connectors
-      if (connectors.length > 0) {
-        console.log(`🔌 Trying wagmi connectors: ${connectors.map(c => c.name).join(', ')}`);
-        
-        // Try each connector until one works
-        for (const connector of connectors) {
-          try {
-            console.log(`🔗 Attempting connection with ${connector.name}...`);
-            await connect({ connector });
-            console.log(`✅ Connected successfully with ${connector.name}`);
-            return; // Exit if successful
-          } catch (connectorError: any) {
-            console.warn(`❌ ${connector.name} failed:`, connectorError.message);
-            continue; // Try next connector
-          }
-        }
-        
-        throw new Error('All connectors failed');
-      } else {
+      if (connectors.length === 0) {
         throw new Error('No wallet connectors available');
       }
-    } catch (err: any) {
-      console.error('❌ All wallet connection methods failed:', err);
+
+      // Try to connect with the first available connector
+      // If we're in Farcaster, this should be the Farcaster miniapp connector
+      const connector = connectors[0];
+      console.log(`🔌 Attempting connection with: ${connector.name}`);
       
-      // Show user-friendly error with instructions
-      const errorMessage = `Wallet connection failed: ${err.message}\n\n` +
-                          `Available options:\n` +
-                          `• Farcaster Wallet: ${sdk && sdk.wallet ? 'Available' : 'Not Available'}\n` +
-                          `• External Wallets: ${connectors.length} found\n\n` +
-                          `Try:\n` +
-                          `1. Refresh the page\n` +
-                          `2. Make sure you have a Web3 wallet installed\n` +
-                          `3. Check wallet permissions`;
+      await connect({ connector });
+      console.log('✅ Wallet connection initiated');
+      
+    } catch (err: any) {
+      console.error('❌ Wallet connection failed:', err);
+      
+      // Show detailed error information
+      const errorDetails = {
+        message: err.message,
+        connectors: connectors.length,
+        connectorNames: connectors.map(c => c.name),
+        userAgent: navigator.userAgent.includes('Farcaster') ? 'Farcaster' : 'Other',
+        ethereum: typeof window !== 'undefined' && window.ethereum ? 'Available' : 'Not Available'
+      };
+      
+      console.log('Connection error details:', errorDetails);
+      
+      const errorMessage = `Connection failed: ${err.message}\n\n` +
+                          `Environment: ${errorDetails.userAgent}\n` +
+                          `Available connectors: ${errorDetails.connectors}\n` +
+                          `Ethereum provider: ${errorDetails.ethereum}\n\n` +
+                          `Try refreshing the page or check wallet permissions.`;
                           
       alert(errorMessage);
     }
