@@ -248,6 +248,7 @@ function BlockitApp() {
   const [revokedCount, setRevokedCount] = useState(0);
   const [error, setError] = useState('');
   const [discoveryProgress, setDiscoveryProgress] = useState({ step: '', current: 0, total: 0 });
+  const [providersLoaded, setProvidersLoaded] = useState(false);
 
   // REAL wagmi hooks for blockchain interaction
   const { address, isConnected } = useAccount();
@@ -266,6 +267,48 @@ function BlockitApp() {
   // Initialize app (KEEP EXACTLY AS IS - DO NOT CHANGE)
   useEffect(() => {
     initializeApp();
+  }, []);
+
+  // Wait for wallet providers to load
+  useEffect(() => {
+    const checkProviders = () => {
+      if (typeof window !== 'undefined') {
+        // Check if ethereum provider is available
+        if ((window as any).ethereum) {
+          console.log('🔗 Wallet provider detected');
+          setProvidersLoaded(true);
+          return;
+        }
+        
+        // Some wallets take time to inject, so wait a bit
+        setTimeout(() => {
+          if ((window as any).ethereum) {
+            console.log('🔗 Wallet provider detected (delayed)');
+            setProvidersLoaded(true);
+          } else {
+            console.log('❌ No wallet provider found after waiting');
+            setProvidersLoaded(true); // Set to true anyway to show error
+          }
+        }, 2000);
+      }
+    };
+
+    // Check immediately
+    checkProviders();
+
+    // Also listen for ethereum provider events
+    const handleEthereum = () => {
+      console.log('🔗 Ethereum provider event detected');
+      setProvidersLoaded(true);
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('ethereum#initialized', handleEthereum);
+      
+      return () => {
+        window.removeEventListener('ethereum#initialized', handleEthereum);
+      };
+    }
   }, []);
 
   const initializeApp = async () => {
@@ -643,13 +686,18 @@ function BlockitApp() {
 
               <button
                 onClick={handleConnect}
-                disabled={isConnecting}
+                disabled={isConnecting || !providersLoaded}
                 className="w-full bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-semibold py-3 px-6 rounded-lg transition-all flex items-center justify-center space-x-2"
               >
                 {isConnecting ? (
                   <>
                     <Loader className="w-5 h-5 animate-spin" />
                     <span>Connecting...</span>
+                  </>
+                ) : !providersLoaded ? (
+                  <>
+                    <Loader className="w-5 h-5 animate-spin" />
+                    <span>Loading Wallets...</span>
                   </>
                 ) : (
                   <>
@@ -668,7 +716,7 @@ function BlockitApp() {
                   <div className="mt-2 space-y-1 text-xs text-gray-600">
                     <div><strong>Environment:</strong> {isFarcasterApp ? 'Farcaster' : 'Browser'}</div>
                     <div><strong>Platform:</strong> {isMobile ? 'Mobile' : 'Desktop'}</div>
-                    <div><strong>Farcaster SDK:</strong> {typeof sdk !== 'undefined' ? '✅ Available' : '❌ Not found'}</div>
+                    <div><strong>Providers Loaded:</strong> {providersLoaded ? '✅ Yes' : '⏳ Loading...'}</div>
                     <div><strong>Window.ethereum:</strong> {typeof window !== 'undefined' && (window as any).ethereum ? '✅ Available' : '❌ Not found'}</div>
                     <div><strong>MetaMask:</strong> {typeof window !== 'undefined' && (window as any).ethereum?.isMetaMask ? '✅ Detected' : '❌ Not detected'}</div>
                     <div><strong>Coinbase:</strong> {typeof window !== 'undefined' && (window as any).ethereum?.isCoinbaseWallet ? '✅ Detected' : '❌ Not detected'}</div>
