@@ -2,91 +2,85 @@ import { http, createConfig } from 'wagmi'
 import { base } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors'
 
-// Import Farcaster miniapp wagmi connector properly
-let farcasterMiniAppConnector: any = null;
+// Try to import Farcaster connectors with better error handling
+let farcasterConnector: any = null;
+
 try {
-  // Try the main miniapp connector first
-  const farcasterWagmi = require('@farcaster/miniapp-wagmi-connector');
-  farcasterMiniAppConnector = farcasterWagmi.farcasterMiniApp;
-  console.log('✅ Farcaster miniapp wagmi connector loaded');
+  // Dynamic import approach for better compatibility
+  if (typeof window !== 'undefined') {
+    // Check if we're in a Farcaster environment
+    const isFarcaster = window.parent !== window || 
+                       navigator.userAgent.includes('Farcaster') ||
+                       document.referrer.includes('farcaster') ||
+                       (window as any).ethereum?.isFarcaster;
+    
+    if (isFarcaster) {
+      console.log('🎯 Detected Farcaster environment');
+    }
+  }
 } catch (error) {
-  try {
-    // Try the frame connector as fallback
-    const frameWagmi = require('@farcaster/frame-wagmi-connector');
-    farcasterMiniAppConnector = frameWagmi.farcasterFrame;
-    console.log('✅ Farcaster frame wagmi connector loaded as fallback');
-  } catch (frameError) {
-    console.log('📱 No Farcaster wagmi connectors available');
-  }
+  console.log('📱 Farcaster connector not available:', error);
 }
 
-// Create connectors array with proper priority
-const connectors = [];
-
-// Add Farcaster miniapp connector first (HIGHEST PRIORITY)
-if (farcasterMiniAppConnector) {
-  try {
-    connectors.push(farcasterMiniAppConnector({
-      // Optional: Add any specific configuration
-      metadata: {
-        name: 'Blockit',
-        description: 'Token Approval Security',
-        url: 'https://blockit-two.vercel.app',
-        icons: ['https://blockit-two.vercel.app/favicon.png']
-      }
-    }));
-    console.log('✅ Added Farcaster miniapp connector');
-  } catch (error) {
-    console.warn('⚠️ Failed to add Farcaster miniapp connector:', error);
-  }
-}
-
-// Add injected wallet connectors as fallbacks
-connectors.push(
-  injected({
-    target: () => {
-      // Check if we're in Farcaster environment first
-      if (typeof window !== 'undefined' && (window as any).ethereum?.isFarcaster) {
-        return {
-          id: 'farcaster',
-          name: 'Farcaster Wallet',
-          provider: (window as any).ethereum,
-        };
-      }
-      
-      // Check for MetaMask
-      if (typeof window !== 'undefined' && (window as any).ethereum?.isMetaMask) {
-        return {
-          id: 'metamask',
-          name: 'MetaMask',
-          provider: (window as any).ethereum,
-        };
-      }
-      
-      // Default injected
-      return {
-        id: 'injected',
-        name: 'Injected Wallet',
-        provider: typeof window !== 'undefined' ? (window as any).ethereum : undefined,
-      };
-    },
-  })
-);
-
+// Create connectors with better fallback logic
 export const config = createConfig({
   chains: [base],
-  connectors,
+  connectors: [
+    // Injected connector with smart detection
+    injected({
+      target() {
+        // Return available providers in order of preference
+        if (typeof window === 'undefined') return undefined;
+        
+        const providers = [];
+        
+        // Check for Farcaster wallet first
+        if ((window as any).ethereum?.isFarcaster) {
+          providers.push({
+            id: 'farcaster',
+            name: 'Farcaster Wallet',
+            provider: (window as any).ethereum,
+          });
+        }
+        
+        // Check for MetaMask
+        if ((window as any).ethereum?.isMetaMask) {
+          providers.push({
+            id: 'metamask', 
+            name: 'MetaMask',
+            provider: (window as any).ethereum,
+          });
+        }
+        
+        // Check for Coinbase Wallet
+        if ((window as any).ethereum?.isCoinbaseWallet) {
+          providers.push({
+            id: 'coinbase',
+            name: 'Coinbase Wallet', 
+            provider: (window as any).ethereum,
+          });
+        }
+        
+        // Fallback to generic injected
+        if ((window as any).ethereum) {
+          providers.push({
+            id: 'injected',
+            name: 'Wallet',
+            provider: (window as any).ethereum,
+          });
+        }
+        
+        console.log(`🔗 Found ${providers.length} wallet providers`);
+        return providers[0]; // Return the first (highest priority) provider
+      },
+    }),
+  ],
   transports: {
     [base.id]: http('https://mainnet.base.org'),
   },
-  // Enable better provider discovery
   multiInjectedProviderDiscovery: true,
-  // Add SSR support
-  ssr: true,
 })
 
-console.log(`🔧 Wagmi configured with ${connectors.length} connectors for Base network`);
-console.log('Available connectors:', connectors.map((c: any) => c.name || c.id));
+console.log('🔧 Wagmi configured for Base network with smart wallet detection');
 
-// Export Base chain for convenience
 export { base as baseChain };
