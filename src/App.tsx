@@ -11,6 +11,7 @@ import { sdk } from '@farcaster/miniapp-sdk';
 // Import configuration for known protocols to check against
 import { 
   BASE_SPENDERS, 
+  BASE_TOKENS,
   getSpenderByAddress,
   type SpenderConfig
 } from './config/baseConfig';
