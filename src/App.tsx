@@ -52,16 +52,65 @@ function BlockitApp(): React.JSX.Element {
 
   const handleConnect = async () => {
     try {
+      console.log('🔗 Attempting wallet connection...');
+      console.log('Available connectors:', connectors.map(c => c.name));
+      
+      // Method 1: Try Farcaster wallet first if available
+      if (sdk && sdk.wallet) {
+        try {
+          console.log('🎯 Trying Farcaster wallet connection...');
+          const permissions = await sdk.wallet.requestPermissions();
+          console.log('✅ Farcaster wallet permissions granted:', permissions);
+          
+          // Check if we're connected after Farcaster wallet
+          setTimeout(() => {
+            if (isConnected) {
+              console.log('✅ Farcaster wallet connected successfully');
+            }
+          }, 1000);
+          
+          return; // Exit early if Farcaster wallet worked
+        } catch (farcasterError: any) {
+          console.warn('⚠️ Farcaster wallet failed:', farcasterError.message);
+          // Continue to try other connectors
+        }
+      }
+
+      // Method 2: Try wagmi connectors
       if (connectors.length > 0) {
-        const connector = connectors[0]; // Use first available connector
-        console.log(`🔗 Connecting with ${connector.name}...`);
-        await connect({ connector });
+        console.log(`🔌 Trying wagmi connectors: ${connectors.map(c => c.name).join(', ')}`);
+        
+        // Try each connector until one works
+        for (const connector of connectors) {
+          try {
+            console.log(`🔗 Attempting connection with ${connector.name}...`);
+            await connect({ connector });
+            console.log(`✅ Connected successfully with ${connector.name}`);
+            return; // Exit if successful
+          } catch (connectorError: any) {
+            console.warn(`❌ ${connector.name} failed:`, connectorError.message);
+            continue; // Try next connector
+          }
+        }
+        
+        throw new Error('All connectors failed');
       } else {
         throw new Error('No wallet connectors available');
       }
     } catch (err: any) {
-      console.error('❌ Wallet connection failed:', err);
-      alert(`Connection failed: ${err.message}\n\nPlease ensure you have a Web3 wallet installed.`);
+      console.error('❌ All wallet connection methods failed:', err);
+      
+      // Show user-friendly error with instructions
+      const errorMessage = `Wallet connection failed: ${err.message}\n\n` +
+                          `Available options:\n` +
+                          `• Farcaster Wallet: ${sdk && sdk.wallet ? 'Available' : 'Not Available'}\n` +
+                          `• External Wallets: ${connectors.length} found\n\n` +
+                          `Try:\n` +
+                          `1. Refresh the page\n` +
+                          `2. Make sure you have a Web3 wallet installed\n` +
+                          `3. Check wallet permissions`;
+                          
+      alert(errorMessage);
     }
   };
 
@@ -399,7 +448,13 @@ function BlockitApp(): React.JSX.Element {
             <h4 className="font-semibold text-gray-800 mb-3">Debug Information</h4>
             <div className="space-y-2 text-xs text-gray-600">
               <div>Farcaster Context: {farcasterContext ? 'Available' : 'None'}</div>
-              <div>Connectors: {connectors.length}</div>
+              <div>Farcaster Wallet: {sdk && sdk.wallet ? 'Available' : 'Not Available'}</div>
+              <div>Wagmi Connectors: {connectors.length}</div>
+              <div>Connector Names: {connectors.map(c => c.name).join(', ')}</div>
+              <div>Connected: {isConnected ? 'Yes' : 'No'}</div>
+              <div>Address: {address || 'None'}</div>
+              <div>Chain: {chain?.name || 'None'} ({chain?.id || 'Unknown'})</div>
+              <div>Window.ethereum: {typeof window !== 'undefined' && window.ethereum ? 'Available' : 'Not Available'}</div>
               <div>Discovery Tokens: {discoveredTokens.length}</div>
               <div>Config: {configSummary.totalTokens} tokens, {configSummary.totalProtocols} protocols</div>
             </div>
