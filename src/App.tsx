@@ -7,13 +7,8 @@ import { useAccount, useConnect, useDisconnect, useConnectors } from 'wagmi';
 // Import our comprehensive scanning components
 import { useBaseTokenDiscovery } from './hooks/useBaseTokenDiscovery';
 
-// Farcaster SDK with error handling
-let sdk: any = null;
-try {
-  sdk = require('@farcaster/miniapp-sdk').sdk;
-} catch (error) {
-  console.warn('Farcaster SDK not available, continuing without it:', error);
-}
+// Import the SDK properly
+import { sdk } from '@farcaster/miniapp-sdk';
 
 // Main Blockit Application Component
 function BlockitApp(): React.JSX.Element {
@@ -49,54 +44,14 @@ function BlockitApp(): React.JSX.Element {
     configSummary
   } = useBaseTokenDiscovery();
 
-  // Call ready() when React app is fully loaded - following official Farcaster pattern
+  // Initialize Farcaster SDK - EXACTLY as documented
   useEffect(() => {
-    const callReady = async () => {
-      try {
-        if (sdk && sdk.actions && typeof sdk.actions.ready === 'function') {
-          console.log('📱 App fully loaded, calling sdk.actions.ready()...');
-          // This is the critical call that hides the splash screen
-          await sdk.actions.ready({
-            disableNativeGestures: false
-          });
-          console.log('✅ sdk.actions.ready() successful - splash screen should be hidden');
-          
-          // Try to get context after ready
-          try {
-            const context = await sdk.context;
-            setFarcasterContext(context);
-            console.log('📱 Farcaster context:', context);
-          } catch (contextError) {
-            console.log('ℹ️ No Farcaster context available');
-          }
-        } else {
-          console.log('ℹ️ Farcaster SDK not available - running in standalone mode');
-        }
-      } catch (error: any) {
-        console.error('❌ sdk.actions.ready() failed:', error);
-        // Even if ready() fails, the app should still work
-      }
-    };
-
-    // Call ready immediately when component mounts (app is ready to display)
-    callReady();
-  }, []); // Empty dependency array - run once when component mounts
+    // After your app is fully loaded and ready to display
+    sdk.actions.ready();
+  }, []);
 
   const handleConnect = async () => {
     try {
-      if (sdk && sdk.wallet) {
-        // Try Farcaster wallet first
-        try {
-          console.log('🔗 Attempting Farcaster wallet connection...');
-          const permissions = await sdk.wallet.requestPermissions();
-          console.log('✅ Farcaster wallet permissions granted:', permissions);
-          return;
-        } catch (farcasterError: any) {
-          console.warn('⚠️ Farcaster wallet failed, trying injected wallet:', farcasterError.message);
-        }
-      }
-
-      // Fallback to injected wallet
       if (connectors.length > 0) {
         const connector = connectors[0]; // Use first available connector
         console.log(`🔗 Connecting with ${connector.name}...`);
@@ -443,7 +398,6 @@ function BlockitApp(): React.JSX.Element {
           <div className="mt-8 bg-gray-50 rounded-lg p-4">
             <h4 className="font-semibold text-gray-800 mb-3">Debug Information</h4>
             <div className="space-y-2 text-xs text-gray-600">
-              <div>SDK Ready: {sdkReady ? 'Yes' : 'No'}</div>
               <div>Farcaster Context: {farcasterContext ? 'Available' : 'None'}</div>
               <div>Connectors: {connectors.length}</div>
               <div>Discovery Tokens: {discoveredTokens.length}</div>
